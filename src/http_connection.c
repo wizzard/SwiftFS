@@ -19,36 +19,61 @@ gpointer http_connection_create (Application *app)
 {
     HttpConnection *con;
     int port;
-    AppConf *conf;
+    struct bufferevent *bev;
 
     con = g_new0 (HttpConnection, 1);
     if (!con) {
         LOG_err (CON_LOG, "Failed to create HttpConnection !");
         return NULL;
     }
-    
-    conf = application_get_conf (app);
+
     con->app = app;
-    con->bucket_name = g_strdup (application_get_bucket_name (app));
+    con->storage_url = g_strdup (application_get_host (app));
+    con->uri = application_get_storage_uri (app);
 
     con->is_acquired = FALSE;
 
-    port = application_get_port (app);
+    port = evhttp_uri_get_port (con->uri);
     // if no port is specified, libevent returns -1
     if (port == -1) {
-        port = conf->http_port;
+        if (uri_is_https (con->uri))
+            port = 443;
+        else
+            port = 80;
     }
 
     LOG_debug (CON_LOG, "Connecting to %s:%d", 
-        application_get_host (app),
+        evhttp_uri_get_host (con->uri),
         port
     );
 
-    // XXX: implement SSL
-    con->evcon = evhttp_connection_base_new (
+    // create SSL buffer
+    if (uri_is_https (con->uri)) {
+        SSL_CTX *ssl_ctx;
+        SSL *ssl;
+
+		ssl_ctx = SSL_CTX_new (SSLv23_method());
+		ssl = SSL_new (ssl_ctx);
+
+		bev = bufferevent_openssl_socket_new (
+            application_get_evbase (app), 
+            -1,
+            ssl,
+		    BUFFEREVENT_SSL_CONNECTING,
+		    BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS
+        );
+    } else {
+		bev = bufferevent_socket_new (
+            application_get_evbase (app),
+            -1,
+		    BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS);
+    }
+
+    con->evcon = evhttp_connection_base_bufferevent_new (
         application_get_evbase (app),
         application_get_dnsbase (app),
-        application_get_host (app),
+        bev,
+        evhttp_uri_get_host (con->uri),
         port
     );
 
@@ -57,27 +82,23 @@ gpointer http_connection_create (Application *app)
         return NULL;
     }
     
-    if (conf) {
-        evhttp_connection_set_timeout (con->evcon, conf->timeout);
-        evhttp_connection_set_retries (con->evcon, conf->retries);
-    } else {
-        evhttp_connection_set_timeout (con->evcon, 60);
-        evhttp_connection_set_retries (con->evcon, -1);
-    }
+    // XXX: config these
+    evhttp_connection_set_timeout (con->evcon, 20);
+    evhttp_connection_set_retries (con->evcon, -1);
 
     evhttp_connection_set_closecb (con->evcon, http_connection_on_close, con);
 
     return (gpointer)con;
 }
 
-// destory HttpConnection)
+// destory HttpConnection
 void http_connection_destroy (gpointer data)
 {
     HttpConnection *con = (HttpConnection *) data;
-    
-    if (con->evcon)
+
+    g_free (con->storage_url);
+    if (con->evcon)    
         evhttp_connection_free (con->evcon);
-    g_free (con->bucket_name);
     g_free (con);
 }
 /*}}}*/
@@ -135,66 +156,6 @@ struct evhttp_connection *http_connection_get_evcon (HttpConnection *con)
 
 /*}}}*/
 
-/*{{{ get_auth_string */
-// create  auth string
-gchar *http_connection_get_auth_string (Application *app, 
-        const gchar *method, const gchar *content_type, const gchar *resource, const gchar *time_str)
-{
-    gchar *string_to_sign;
-    unsigned int md_len;
-    unsigned char md[EVP_MAX_MD_SIZE];
-    gchar *res;
-    BIO *bmem, *b64;
-    BUF_MEM *bptr;
-    int ret;
-    gchar *tmp;
-
-    tmp = g_strdup_printf ("/%s%s", application_get_bucket_name (app), resource);
-
-    string_to_sign = g_strdup_printf (
-        "%s\n"  // HTTP-Verb + "\n"
-        "%s\n"  // Content-MD5 + "\n"
-        "%s\n"  // Content-Type + "\n"
-        "%s\n"  // Date + "\n" 
-        "%s"    // CanonicalizedAmzHeaders
-        "%s",    // CanonicalizedResource
-
-        method, "", content_type, time_str, "", tmp
-    );
-
-    g_free (tmp);
-
-   // LOG_debug (CON_LOG, "%s", string_to_sign);
-
-    HMAC (EVP_sha1(), 
-        application_get_secret_access_key (app),
-        strlen (application_get_secret_access_key (app)),
-        (unsigned char *)string_to_sign, strlen (string_to_sign),
-        md, &md_len
-    );
-    g_free (string_to_sign);
-    
-    b64 = BIO_new (BIO_f_base64 ());
-    bmem = BIO_new (BIO_s_mem ());
-    b64 = BIO_push (b64, bmem);
-    BIO_write (b64, md, md_len);
-    ret = BIO_flush (b64);
-    if (ret != 1) {
-        LOG_err (CON_LOG, "Failed to create base64 of auth string !");
-        return NULL;
-    }
-    BIO_get_mem_ptr (b64, &bptr);
-
-    res = g_malloc (bptr->length);
-    memcpy (res, bptr->data, bptr->length);
-    res[bptr->length - 1] = '\0';
-
-    BIO_free_all (b64);
-
-    return res;
-}
-/*}}}*/
-
 // create  and setup HTTP connection request
 struct evhttp_request *http_connection_create_request (HttpConnection *con,
     void (*cb)(struct evhttp_request *, void *), void *arg,
@@ -211,15 +172,17 @@ struct evhttp_request *http_connection_create_request (HttpConnection *con,
 	gmtime_r(&t, &cur);
 	cur_p = &cur;
 
-    snprintf (auth_key, sizeof (auth_key), "AWS %s:%s", application_get_access_key_id (con->app), auth_str);
-
     req = evhttp_request_new (cb, arg);
-    evhttp_add_header (req->output_headers, "Authorization", auth_key);
-    evhttp_add_header (req->output_headers, "Host", application_get_host_header (con->app));
-		
+    evhttp_add_header (req->output_headers, "X-Auth-Token", application_get_auth_token (con->app));
+    evhttp_add_header (req->output_headers, "Host", application_get_host (con->app));
+	evhttp_add_header (req->output_headers, "Accept", "*/*");
+
+    LOG_debug (CON_LOG, "HOST: %s", application_get_host (con->app));
+	/*	
     if (strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", cur_p) != 0) {
 			evhttp_add_header (req->output_headers, "Date", date);
 		}
+    */
     return req;
 }
 
@@ -235,7 +198,7 @@ static void http_connection_on_responce_cb (struct evhttp_request *req, void *ct
 {
     RequestData *data = (RequestData *) ctx;
     struct evbuffer *inbuf;
-    const char *buf = NULL;
+    const char *buf;
     size_t buf_len;
 
     LOG_debug (CON_LOG, "Got HTTP response from server !");
@@ -248,9 +211,9 @@ static void http_connection_on_responce_cb (struct evhttp_request *req, void *ct
     }
 
     // XXX: handle redirect
-    // 200 and 204 (No Content) are ok
-    if (evhttp_request_get_response_code (req) != 200 && evhttp_request_get_response_code (req) != 204
-        && evhttp_request_get_response_code (req) != 307 && evhttp_request_get_response_code (req) != 301) {
+    // 200 (Ok), 201 (Created), 202 (Accepted), 204 (No Content) are ok
+    if (evhttp_request_get_response_code (req) != 200 && evhttp_request_get_response_code (req) != 204 &&
+            evhttp_request_get_response_code (req) != 202 && evhttp_request_get_response_code (req) != 201) {
         LOG_err (CON_LOG, "Server returned HTTP error: %d !", evhttp_request_get_response_code (req));
         LOG_debug (CON_LOG, "Error str: %s", req->response_code_line);
         if (data->error_cb)
@@ -265,7 +228,7 @@ static void http_connection_on_responce_cb (struct evhttp_request *req, void *ct
     if (data->responce_cb)
         data->responce_cb (data->con, data->ctx, buf, buf_len, evhttp_request_get_input_headers (req));
     else
-        LOG_debug (CON_LOG, ">>> NO callback function !");
+        LOG_msg (CON_LOG, ">>> NO callback function !");
 
 done:
     g_free (data);
@@ -279,16 +242,13 @@ gboolean http_connection_make_request (HttpConnection *con,
     HttpConnection_error_cb error_cb,
     gpointer ctx)
 {
-    gchar *auth_str;
     struct evhttp_request *req;
-    gchar auth_key[300];
 	time_t t;
     char time_str[50];
     RequestData *data;
     int res;
     enum evhttp_cmd_type cmd_type;
-    AppConf *conf;
-
+    
     data = g_new0 (RequestData, 1);
     data->responce_cb = responce_cb;
     data->error_cb = error_cb;
@@ -301,8 +261,6 @@ gboolean http_connection_make_request (HttpConnection *con,
         cmd_type = EVHTTP_REQ_PUT;
     } else if (!strcasecmp (http_cmd, "DELETE")) {
         cmd_type = EVHTTP_REQ_DELETE;
-    } else if (!strcasecmp (http_cmd, "HEAD")) {
-        cmd_type = EVHTTP_REQ_HEAD;
     } else {
         LOG_err (CON_LOG, "Unsupported HTTP method: %s", http_cmd);
         return FALSE;
@@ -310,9 +268,6 @@ gboolean http_connection_make_request (HttpConnection *con,
     
     t = time (NULL);
     strftime (time_str, sizeof (time_str), "%a, %d %b %Y %H:%M:%S GMT", gmtime(&t));
-    auth_str = http_connection_get_auth_string (con->app, http_cmd, "", resource_path, time_str);
-    snprintf (auth_key, sizeof (auth_key), "AWS %s:%s", application_get_access_key_id (con->app), auth_str);
-    g_free (auth_str);
 
     req = evhttp_request_new (http_connection_on_responce_cb, data);
     if (!req) {
@@ -320,20 +275,16 @@ gboolean http_connection_make_request (HttpConnection *con,
         return FALSE;
     }
 
-    evhttp_add_header (req->output_headers, "Authorization", auth_key);
-    evhttp_add_header (req->output_headers, "Host", application_get_host_header (con->app));
-	evhttp_add_header (req->output_headers, "Date", time_str);
+    evhttp_add_header (req->output_headers, "X-Auth-Token", application_get_auth_token (con->app));
+    evhttp_add_header (req->output_headers, "Host", application_get_host (con->app));	
+	//evhttp_add_header (req->output_headers, "Date", time_str);
 
     if (out_buffer) {
         evbuffer_add_buffer (req->output_buffer, out_buffer);
     }
 
-    conf = application_get_conf (con->app);
-    if (conf->path_style) {
-        request_str = g_strdup_printf("/%s%s", application_get_bucket_name (con->app), request_str);
-    }
-
-    LOG_debug (CON_LOG, "[%p] bucket: %s path: %s", con, application_get_bucket_name (con->app), request_str);
+    LOG_debug (CON_LOG, "HOST: %s", application_get_host (con->app));
+    LOG_msg (CON_LOG, "[%p] New request: %s", con, request_str);
 
     res = evhttp_make_request (http_connection_get_evcon (con), req, cmd_type, request_str);
 
@@ -341,4 +292,4 @@ gboolean http_connection_make_request (HttpConnection *con,
         return FALSE;
     else
         return TRUE;
-}    
+}

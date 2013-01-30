@@ -19,7 +19,8 @@ struct _HttpConnection {
     gpointer pool_ctx;
 
     struct evhttp_connection *evcon;
-    gchar *bucket_name;
+    struct evhttp_uri *uri;
+    gchar *storage_url;
 
     // is taken by high level
     gboolean is_acquired;

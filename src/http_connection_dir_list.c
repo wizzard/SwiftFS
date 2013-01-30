@@ -7,7 +7,7 @@
 
 typedef struct {
     Application *app;
-    DirTree *dirtree;
+    DirTree *dir_tree;
     HttpConnection *con;
     gchar *resource_path;
     gchar *dir_path;
@@ -79,7 +79,7 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
             }
             
             LOG_debug (CON_DIR_LOG, ">> got file entry: %s", name);
-            dirtree_update_entry (dir_list->dirtree, dir_list->dir_path, DET_file, dir_list->ino, name, size);
+            dir_tree_update_entry (dir_list->dir_tree, dir_list->dir_path, DET_file, dir_list->ino, name, size);
 
         // directory
         } else if (is_subdir) {
@@ -103,7 +103,7 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
             }
 
             LOG_debug (CON_DIR_LOG, ">> got dir entry: %s", name);
-            dirtree_update_entry (dir_list->dirtree, dir_list->dir_path, DET_dir, dir_list->ino, name, 0);
+            dir_tree_update_entry (dir_list->dir_tree, dir_list->dir_path, DET_dir, dir_list->ino, name, 0);
         } else {
             LOG_debug (CON_DIR_LOG, "unknown element: %s", onode->name);
         }
@@ -123,7 +123,7 @@ static void http_connection_on_directory_listing_error (HttpConnection *con, voi
     LOG_err (CON_DIR_LOG, "Failed to retrieve directory listing !");
 
     // we are done, stop updating
-    dirtree_stop_update (dir_req->dirtree, dir_req->ino);
+    dir_tree_stop_update (dir_req->dir_tree, dir_req->ino);
     
     if (dir_req->directory_listing_callback)
         dir_req->directory_listing_callback (dir_req->callback_data, FALSE);
@@ -149,7 +149,7 @@ static void http_connection_on_directory_listing_data (HttpConnection *con, void
             dir_req->directory_listing_callback (dir_req->callback_data, TRUE);
         
         // we are done, stop updating
-        dirtree_stop_update (dir_req->dirtree, dir_req->ino);
+        dir_tree_stop_update (dir_req->dir_tree, dir_req->ino);
         
         // release HTTP client
         http_connection_release (con);
@@ -167,7 +167,7 @@ static void http_connection_on_directory_listing_data (HttpConnection *con, void
             dir_req->directory_listing_callback (dir_req->callback_data, TRUE);
 
         // we are done, stop updating
-        dirtree_stop_update (dir_req->dirtree, dir_req->ino);
+        dir_tree_stop_update (dir_req->dir_tree, dir_req->ino);
         
         // release HTTP client
         http_connection_release (con);
@@ -184,7 +184,7 @@ static void http_connection_on_directory_listing_data (HttpConnection *con, void
             dir_req->directory_listing_callback (dir_req->callback_data, TRUE);
         
         // we are done, stop updating
-        dirtree_stop_update (dir_req->dirtree, dir_req->ino);
+        dir_tree_stop_update (dir_req->dir_tree, dir_req->ino);
         
         // release HTTP client
         http_connection_release (con);
@@ -225,7 +225,7 @@ gboolean http_connection_get_directory_listing (HttpConnection *con, const gchar
     dir_req = g_new0 (DirListRequest, 1);
     dir_req->con = con;
     dir_req->app = http_connection_get_app (con);
-    dir_req->dirtree = application_get_dirtree (dir_req->app);
+    dir_req->dir_tree = application_get_dir_tree (dir_req->app);
     dir_req->ino = ino;
     // XXX: settings
     dir_req->max_keys = 1000;
@@ -236,7 +236,7 @@ gboolean http_connection_get_directory_listing (HttpConnection *con, const gchar
     http_connection_acquire (con);
     
     // inform that we started to update the directory
-    dirtree_start_update (dir_req->dirtree, dir_path);
+    dir_tree_start_update (dir_req->dir_tree, dir_path);
 
     
     //XXX: fix dir_path

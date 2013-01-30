@@ -3,7 +3,7 @@
  * file 'LICENSE.txt', which is part of this source code package.
  */
 #include "dir_tree.h"
-#include "fuse.h"
+#include "hfs_fuse.h"
 #include "http_connection.h"
 #include "http_client.h"
 #include "client_pool.h"
@@ -303,8 +303,8 @@ void dir_tree_fill_on_dir_buf_cb (gpointer callback_data, gboolean success)
         // construct directory buffer
         // add "." and ".."
         memset (&b, 0, sizeof(b));
-        fuse_add_dirbuf (dir_fill_data->req, &b, ".", dir_fill_data->en->ino);
-        fuse_add_dirbuf (dir_fill_data->req, &b, "..", dir_fill_data->en->ino);
+        hfs_fuse_add_dirbuf (dir_fill_data->req, &b, ".", dir_fill_data->en->ino);
+        hfs_fuse_add_dirbuf (dir_fill_data->req, &b, "..", dir_fill_data->en->ino);
 
         LOG_debug (DIR_TREE_LOG, "Entries in directory : %u", g_hash_table_size (dir_fill_data->en->h_dir_tree));
         
@@ -314,7 +314,7 @@ void dir_tree_fill_on_dir_buf_cb (gpointer callback_data, gboolean success)
             DirEntry *tmp_en = (DirEntry *) value;
             // add only updated entries
             if (tmp_en->age >= dir_fill_data->dtree->current_age)
-                fuse_add_dirbuf (dir_fill_data->req, &b, tmp_en->basename, tmp_en->ino);
+                hfs_fuse_add_dirbuf (dir_fill_data->req, &b, tmp_en->basename, tmp_en->ino);
         }
         // done, save as cache
         dir_fill_data->en->dir_cache_size = b.size;
@@ -809,29 +809,20 @@ static void dir_tree_file_read_prepare_request (DirTreeFileOpData *op_data, Http
     
     strftime (time_str, sizeof (time_str), "%a, %d %b %Y %H:%M:%S GMT", gmtime(&t));
 
-    auth_str = (gchar *)http_connection_get_auth_string (op_data->dtree->app, "GET", "", op_data->en->fullpath, time_str);
-    snprintf (auth_key, sizeof (auth_key), "AWS %s:%s", application_get_access_key_id (op_data->dtree->app), auth_str);
-    g_free (auth_str);
     snprintf (range, sizeof (range), "bytes=%"OFF_FMT"-%"OFF_FMT, off, off+size - 1);
     LOG_debug (DIR_TREE_LOG, "range: %s", range);
 
     http_client_add_output_header (http, "Authorization", auth_key);
     http_client_add_output_header (http, "Date", time_str);
     http_client_add_output_header (http, "Range", range);
-    http_client_add_output_header (http, "Host", application_get_host_header (op_data->dtree->app));
 
     // XXX: HTTPS
     conf = application_get_conf (op_data->dtree->app);
-    if (conf->path_style) {
-        url = g_strdup_printf ("http://%s:%d/%s%s", application_get_host (op_data->dtree->app),
-                                                    application_get_port (op_data->dtree->app),
-                                                    application_get_bucket_name (op_data->dtree->app),
-                                                    op_data->en->fullpath);
-    } else {
-        url = g_strdup_printf ("http://%s%d%s", application_get_host (op_data->dtree->app),
-                                                application_get_port (op_data->dtree->app),
-                                                op_data->en->fullpath);
-    }
+    url = g_strdup_printf ("http://%s%d%s", 
+        application_get_host (op_data->dtree->app),
+        application_get_port (op_data->dtree->app),
+        op_data->en->fullpath
+    );
     
     http_client_start_request (http, Method_get, url);
 

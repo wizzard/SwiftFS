@@ -1,17 +1,17 @@
 AM_CPPFLAGS = -I$(top_srcdir)/include -DSYSCONFDIR=\""$(sysconfdir)/@PACKAGE@/"\" 
-bin_PROGRAMS = hfs
-hfs_SOURCES = log.c
-hfs_SOURCES += dir_tree.c  
-hfs_SOURCES += hfs_fuse.c  
-hfs_SOURCES += http_connection.c
-hfs_SOURCES += http_connection_dir_list.c
-hfs_SOURCES += http_connection_file_send.c
-hfs_SOURCES += http_client.c
-hfs_SOURCES += client_pool.c
-hfs_SOURCES += file_entry.c
-hfs_SOURCES += cache_mng.c
-hfs_SOURCES += utils.c
-hfs_SOURCES += main.c
+bin_PROGRAMS = hydrafs
+hydrafs_SOURCES = log.c
+hydrafs_SOURCES += dir_tree.c  
+hydrafs_SOURCES += hfs_fuse.c  
+hydrafs_SOURCES += http_connection.c
+hydrafs_SOURCES += http_connection_dir_list.c
+hydrafs_SOURCES += http_connection_file_send.c
+hydrafs_SOURCES += http_client.c
+hydrafs_SOURCES += client_pool.c
+hydrafs_SOURCES += file_entry.c
+hydrafs_SOURCES += cache_mng.c
+hydrafs_SOURCES += utils.c
+hydrafs_SOURCES += main.c
 
-hfs_CFLAGS = $(AM_CFLAGS) $(DEPS_CFLAGS)
-hfs_LDADD = $(AM_LDADD) $(DEPS_LIBS)
+hydrafs_CFLAGS = $(AM_CFLAGS) $(DEPS_CFLAGS)
+hydrafs_LDADD = $(AM_LDADD) $(DEPS_LIBS)

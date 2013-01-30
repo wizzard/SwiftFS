@@ -40,3 +40,21 @@ gchar *get_md5_sum (char *buf, size_t len)
 
     return out;
 }
+
+
+gboolean uri_is_https (const struct evhttp_uri *uri)
+{
+    const char *scheme;
+
+    if (!uri)
+        return FALSE;
+
+    scheme = evhttp_uri_get_scheme (uri);
+    if (!scheme)
+        return FALSE;
+
+    if (!strncasecmp ("https", scheme, 5))
+        return TRUE;
+    
+    return FALSE;
+}

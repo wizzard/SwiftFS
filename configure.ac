@@ -10,7 +10,7 @@ AC_PROG_INSTALL
 AC_PROG_LN_S
 AC_PROG_RANLIB
 
-PKG_CHECK_MODULES([DEPS], [glib-2.0 >= 2.32.1 fuse >= 2.8.4 libevent >= 2.1 libxml-2.0 >= 2.6 libcrypto >= 0.9])
+PKG_CHECK_MODULES([DEPS], [glib-2.0 >= 2.32.1 fuse >= 2.8.4 libevent >= 2.1 libevent_openssl >= 2.1.2 libxml-2.0 >= 2.6 libcrypto >= 0.9])
 
 AC_ARG_ENABLE(debug-mode,
      AS_HELP_STRING(--enable-debug-mode, enable support for running in debug mode),

@@ -26,12 +26,18 @@ struct _Application {
     ClientPool *read_client_pool;
     ClientPool *ops_client_pool;
 
-    gchar *aws_access_key_id;
-    gchar *aws_secret_access_key;
+    gchar *auth_user;
+    gchar *auth_pwd;
+    gchar *auth_token;
 
     gchar *container_name;
-    gchar *host_header;
     struct evhttp_uri *uri;
+    const gchar *base_path;
+
+    struct evhttp_uri *storage_url;
+    const gchar *storage_url_host;
+    int storage_url_port;
+    gchar *storage_url_str;
 
     gchar *tmp_dir;
 
@@ -64,16 +70,6 @@ DirTree *application_get_dir_tree (Application *app)
     return app->dir_tree;
 }
 
-const gchar *application_get_access_key_id (Application *app)
-{
-    return (const gchar *) app->aws_access_key_id;
-}
-
-const gchar *application_get_secret_access_key (Application *app)
-{
-    return (const gchar *) app->aws_secret_access_key;
-}
-
 ClientPool *application_get_write_client_pool (Application *app)
 {
     return app->write_client_pool;
@@ -94,14 +90,24 @@ const gchar *application_get_container_name (Application *app)
     return app->container_name;
 }
 
+const gchar *application_get_base_path (Application *app)
+{
+    return app->base_path;
+}
+
+struct evhttp_uri *application_get_storage_uri (Application *app)
+{
+    return app->storage_url;
+}
+
 const gchar *application_get_host (Application *app)
 {
     return evhttp_uri_get_host (app->uri);
 }
 
-const gchar *application_get_host_header (Application *app)
+const gchar *application_get_auth_token (Application *app)
 {
-    return app->host_header;
+    return app->auth_token;
 }
 
 int application_get_port (Application *app)
@@ -208,11 +214,6 @@ static void sigint_cb (G_GNUC_UNUSED evutil_socket_t sig, G_GNUC_UNUSED short ev
 }
 /*}}}*/
 
-const gchar *application_host_header_create (Application *app)
-{
-    AppConf *conf = application_get_conf (app);
-}
-
 static gint application_finish_initialization_and_run (Application *app)
 {
     struct sigaction sigact;
@@ -308,7 +309,7 @@ static gint application_finish_initialization_and_run (Application *app)
 /*}}}*/
     
     if (!app->foreground)
-        hfs_fuse_daemonize (0);
+        fuse_daemonize (0);
 
     return 0;
 }
@@ -357,10 +358,6 @@ static void application_get_service_on_done (HttpConnection *con, void *ctx,
             return;
         }
         LOG_debug (APP_LOG, "New service URL: %s", evhttp_uri_get_host (app->uri));
-
-        // update host header
-        g_free (app->host_header);
-        app->host_header = application_host_header_create (app);
 
         // perform a new request
         app->service_con = http_connection_create (app);
@@ -414,7 +411,6 @@ static void application_destroy (Application *app)
     g_free (app->mountpoint);
     g_free (app->tmp_dir);
     g_free (app->container_name);
-    g_free (app->host_header);
     evhttp_uri_free (app->uri);
 
     g_free (app->conf);
@@ -432,7 +428,6 @@ int main (int argc, char *argv[])
     Application *app;
     gboolean verbose = FALSE;
     gboolean version = FALSE;
-    gboolean path_style = FALSE;
     GError *error = NULL;
     GOptionContext *context;
     gchar **s_params = NULL;
@@ -451,7 +446,6 @@ int main (int argc, char *argv[])
 	    { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY, &s_params, NULL, NULL },
 	    { "config", 'c', 0, G_OPTION_ARG_FILENAME_ARRAY, &s_config, conf_str, NULL},
         { "foreground", 'f', 0, G_OPTION_ARG_NONE, &foreground, "Flag. Do not daemonize process.", NULL },
-        { "path_style", 'p', 0, G_OPTION_ARG_NONE, &path_style, "Flag. Use legacy path-style access syntax.", NULL },
         { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose, "Verbose output.", NULL },
         { "version", 0, 0, G_OPTION_ARG_NONE, &version, "Show application version and exit.", NULL },
         { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
@@ -467,6 +461,7 @@ int main (int argc, char *argv[])
     app = g_new0 (Application, 1);
     app->service_con_redirects = 0;
     app->evbase = event_base_new ();
+    app->auth_token = NULL;
 
     app->conf = g_new0 (AppConf, 1);
     // set default values
@@ -499,7 +494,7 @@ int main (int argc, char *argv[])
     // parse command line options
     context = g_option_context_new ("[http://auth.api.yourcloud.com/v1.0] [container] [options] [mountpoint]");
     g_option_context_add_main_entries (context, entries, NULL);
-    g_option_context_set_description (context, "Please set both AWSACCESSKEYID and AWSSECRETACCESSKEY environment variables!");
+    g_option_context_set_description (context, "Please set both HydraFS_USER and HydraFS_PWD environment variables!");
     if (!g_option_context_parse (context, &argc, &argv, &error)) {
         g_fprintf (stderr, "Failed to parse command line options: %s\n", error->message);
         return FALSE;
@@ -520,12 +515,10 @@ int main (int argc, char *argv[])
         return 0;
     }
     
-    app->conf->path_style = path_style;
-
     // get access parameters from the environment
-    app->aws_access_key_id = getenv("AWSACCESSKEYID");
-    app->aws_secret_access_key = getenv("AWSSECRETACCESSKEY");
-    if (!app->aws_access_key_id || !app->aws_secret_access_key) {
+    app->auth_user = getenv ("HydraFS_USER");
+    app->auth_pwd = getenv ("HydraFS_PWD");
+    if (!app->auth_user || !app->auth_pwd) {
         LOG_err (APP_LOG, "Environment variables are not set!");
         g_fprintf (stdout, "%s\n", g_option_context_get_help (context, TRUE, NULL));
         return -1;
@@ -544,7 +537,6 @@ int main (int argc, char *argv[])
         return -1;
     }
     app->container_name = g_strdup (s_params[1]);
-    app->host_header = application_host_header_create (app);
     
     app->mountpoint = g_strdup (s_params[2]);
 
@@ -636,12 +628,6 @@ int main (int argc, char *argv[])
         }
 
         app->conf->max_requests_per_pool = g_key_file_get_integer (key_file, "connections", "max_requests_per_pool", &error);
-        if (error) {
-            LOG_err (APP_LOG, "Failed to read configuration file (%s): %s", conf_path, error->message);
-            return -1;
-        }
-
-        app->conf->path_style = g_key_file_get_boolean (key_file, "connections", "path_style", &error);
         if (error) {
             LOG_err (APP_LOG, "Failed to read configuration file (%s): %s", conf_path, error->message);
             return -1;
