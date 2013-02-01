@@ -7,11 +7,18 @@
 #include "http_connection.h"
 #include "client_pool.h"
 
+// 1. Create 100 files, fill with random data, get MD5 sum
+// 2. Start HTTP server
+// 3. Send 100 requests to ClientPool
+// 4. Get parts of intput file, save them to output file
+// 4. get Md5 sum and compare with the original MD5 sum
+
 #define POOL_TEST "pool_test"
 typedef struct {
     gchar *in_name;
     gchar *md5;
     gchar *url;
+    gint id;
     
     gchar *out_name;
     FILE *fout;
@@ -59,6 +66,7 @@ static GList *populate_file_list (gint max_files, GList *l_files, gchar *in_dir)
 
         fdata = g_new0 (FileData, 1);
         fdata->checked = FALSE;
+        fdata->id = i;
         bytes_len = g_random_int_range (100000, 1000000);
         bytes = g_malloc (bytes_len + 1);
         RAND_pseudo_bytes (bytes, bytes_len);
@@ -109,6 +117,8 @@ static void on_last_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpoi
     buf_len = evbuffer_get_length (input_buf);
     buf = (gchar *) evbuffer_pullup (input_buf, buf_len);
 
+    LOG_debug (POOL_TEST, "Last chunk ID:%d len: %zu", fdata->id, buf_len);
+
     md5 = get_md5_sum (buf, buf_len);
 
     LOG_debug (POOL_TEST, "%s == %s", fdata->md5, md5);
@@ -124,9 +134,25 @@ static void on_last_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpoi
     }
 }
 
-static void on_get_http_client (HttpClient *http, gpointer pool_ctx)
+static void on_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpointer ctx)
+{
+    gchar *buf = NULL;
+    size_t buf_len;
+    FileData *fdata = (FileData *) ctx;
+    gchar *md5;
+
+    buf_len = evbuffer_get_length (input_buf);
+    buf = (gchar *) evbuffer_pullup (input_buf, buf_len);
+
+    fwrite (fdata->fout);
+    
+    LOG_debug (POOL_TEST, "chunk ID:%d len: %zu", fdata->id, buf_len);
+}
+
+static void on_get_http_client (gpointer client, gpointer pool_ctx)
 {
     FileData *fd = (FileData *) pool_ctx;
+    HttpClient *http = (HttpClient *) client;
     gpointer p;
     gint i;
 
@@ -145,6 +171,7 @@ static void on_get_http_client (HttpClient *http, gpointer pool_ctx)
     http_client_request_reset (http);
 
     http_client_set_cb_ctx (http, fd);
+    http_client_set_on_chunk_cb (http, on_chunk_cb);
     http_client_set_on_last_chunk_cb (http, on_last_chunk_cb);
 
     http_client_set_output_length (http, 0);
@@ -171,9 +198,10 @@ static void on_srv_request (struct evhttp_request *req, void *ctx)
 {
     struct evbuffer *in;
     gchar *dir = (gchar *) ctx;
-    gchar *path, *tmp, *decoded_path;
+    gchar *path;
+    const gchar *tmp, *decoded_path;
 	const char *uri = evhttp_request_get_uri(req);
-	struct evhttp_uri *decoded = NULL;
+	const struct evhttp_uri *decoded = NULL;
     struct evbuffer *evb = NULL;
     char buf[BUFFER_SIZE];
     FILE *f;
@@ -228,29 +256,10 @@ struct evdns_base *application_get_dnsbase (Application *app)
     return app->dns_base;
 }
 
-const gchar *application_get_access_key_id (Application *app)
-{
-    return "";
-}
-
-const gchar *application_get_secret_access_key (Application *app)
-{
-    return "";
-}
-
-const gchar *application_get_bucket_name (Application *app)
-{
-    return "";
-}
 
 const gchar *application_get_host (Application *app)
 {
     return "127.0.0.1";
-}
-
-const gchar *application_get_host_header (Application *app)
-{
-    return "";
 }
 
 int application_get_port (Application *app)
@@ -258,10 +267,29 @@ int application_get_port (Application *app)
     return 8011;
 }
 
+const gchar *application_get_container_name (Application *app)
+{
+    return "test";
+}
+
+const gchar *application_get_base_path (Application *app)
+{
+    return "/";
+}
+
+struct evhttp_uri *application_get_storage_uri (Application *app)
+{
+    return NULL;
+}
 
 AppConf *application_get_conf (Application *app)
 {
     return app->conf;
+}
+
+const gchar *application_get_auth_token (Application *app)
+{
+    return "";
 }
 
 static gboolean print_foreach (gconstpointer a, gconstpointer b)
@@ -317,7 +345,8 @@ int main (int argc, char *argv[])
 
     event_base_dispatch (app->evbase);
 
-    g_hash_table_foreach (app->h_clients_freq, print_foreach, NULL);
+    g_printf ("Clients usage: \n");
+    g_hash_table_foreach (app->h_clients_freq, (GHFunc) print_foreach, NULL);
 
     return 0;
 }
