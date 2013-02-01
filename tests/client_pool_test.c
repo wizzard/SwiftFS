@@ -10,7 +10,7 @@
 // 1. Create 100 files, fill with random data, get MD5 sum
 // 2. Start HTTP server
 // 3. Send 100 requests to ClientPool
-// 4. Get parts of intput file, save them to output file
+// 4. Get parts, save them to output file
 // 4. get Md5 sum and compare with the original MD5 sum
 
 #define POOL_TEST "pool_test"
@@ -24,7 +24,6 @@ typedef struct {
     FILE *fout;
 
     gboolean checked;
-    GList *l;
 } FileData;
 
 typedef struct {
@@ -36,6 +35,7 @@ struct _Application {
     struct event_base *evbase;
     struct evdns_base *dns_base;
     AppConf *conf;
+    struct evhttp *http;
 
     GList *l_files;
     GHashTable *h_clients_freq; // keeps the number of requests for each HTTP client
@@ -88,9 +88,14 @@ static GList *populate_file_list (gint max_files, GList *l_files, gchar *in_dir)
         g_assert (fdata->url);
         
         LOG_debug (POOL_TEST, "%s -> %s, size: %u", fdata->in_name, fdata->md5, bytes_len);
+
+        g_free (bytes);
         
+        g_free (name);
         l_files = g_list_append (l_files, fdata);
     }
+
+    g_free (out_dir);
 
     return l_files;
 }
@@ -113,16 +118,37 @@ static void on_last_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpoi
     size_t buf_len;
     FileData *fdata = (FileData *) ctx;
     gchar *md5;
+    int fd;
+    struct stat st;
+    struct evbuffer *evb = NULL;
 
     buf_len = evbuffer_get_length (input_buf);
     buf = (gchar *) evbuffer_pullup (input_buf, buf_len);
 
     LOG_debug (POOL_TEST, "Last chunk ID:%d len: %zu", fdata->id, buf_len);
 
-    md5 = get_md5_sum (buf, buf_len);
+    g_assert (fwrite (buf, 1, buf_len, fdata->fout) == buf_len);
+
+    evbuffer_drain (input_buf, buf_len);
+    
+    // close output file
+    fclose (fdata->fout);
+
+	g_assert ((fd = open(fdata->out_name, O_RDONLY)) >= 0);
+    g_assert (fstat(fd, &st) >= 0);
+
+    evb = evbuffer_new();
+    evbuffer_add_file(evb, fd, 0, st.st_size);
+
+    md5 = get_md5_sum (evbuffer_pullup (evb, -1), evbuffer_get_length (evb));
+
 
     LOG_debug (POOL_TEST, "%s == %s", fdata->md5, md5);
     g_assert_cmpstr (fdata->md5, ==, md5);
+    g_free (md5);
+
+    evbuffer_free (evb);
+    close (fd);
 
     fdata->checked = TRUE;
 
@@ -144,7 +170,9 @@ static void on_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpointer 
     buf_len = evbuffer_get_length (input_buf);
     buf = (gchar *) evbuffer_pullup (input_buf, buf_len);
 
-    fwrite (fdata->fout);
+    g_assert (fwrite (buf, 1, buf_len, fdata->fout) == buf_len);
+
+    evbuffer_drain (input_buf, buf_len);
     
     LOG_debug (POOL_TEST, "chunk ID:%d len: %zu", fdata->id, buf_len);
 }
@@ -175,6 +203,10 @@ static void on_get_http_client (gpointer client, gpointer pool_ctx)
     http_client_set_on_last_chunk_cb (http, on_last_chunk_cb);
 
     http_client_set_output_length (http, 0);
+    http_client_add_output_header (http, "Authorization", "test1");
+    http_client_add_output_header (http, "Date", "test 2");
+    http_client_add_output_header (http, "Range", "123123");
+
     http_client_start_request (http, Method_get, fd->url);
 }
 
@@ -221,13 +253,18 @@ static void on_srv_request (struct evhttp_request *req, void *ctx)
     path = g_strdup_printf ("%s/%s", dir, decoded_path);
     LOG_debug (POOL_TEST, "SRV: received %d bytes. Req: %s, path: %s", evbuffer_get_length (in), evhttp_request_get_uri (req), path);
 
+    g_free (decoded_path);
+    evhttp_uri_free (decoded);
     f = fopen (path, "r");
     g_assert (f);
+    g_free (path);
 
     while ((bytes_read = fread (buf, 1, BUFFER_SIZE, f)) > 0) {
         evbuffer_add (evb, buf, bytes_read);
         total_bytes += bytes_read;
     }
+
+    evhttp_add_header (req->output_headers, "Connection", "Closed");
     evhttp_send_reply(req, 200, "OK", evb);
 
     LOG_debug (POOL_TEST, "Total bytes sent: %u", total_bytes);
@@ -238,13 +275,13 @@ static void on_srv_request (struct evhttp_request *req, void *ctx)
 
 static void start_srv (struct event_base *base, gchar *in_dir)
 {
-    struct evhttp *http;
+    app->http = evhttp_new (base);
+    g_assert (app->http);
+    evhttp_bind_socket (app->http, "127.0.0.1", 8011);
+    evhttp_set_gencb (app->http, on_srv_request, in_dir);
 
-    http = evhttp_new (base);
-    evhttp_bind_socket (http, "127.0.0.1", 8011);
-    evhttp_set_gencb (http, on_srv_request, in_dir);
+    LOG_debug (POOL_TEST, "SRV: started");
 }
-
 
 struct event_base *application_get_evbase (Application *app)
 {
@@ -306,6 +343,7 @@ int main (int argc, char *argv[])
     GList *l_files = NULL;
     CBData *cb;
     gchar *in_dir;
+    GList *tmp;
 
     log_level = LOG_debug;
 
@@ -314,7 +352,7 @@ int main (int argc, char *argv[])
     in_dir = g_dir_make_tmp (NULL, NULL);
     g_assert (in_dir);
 
-    l_files = populate_file_list (100, l_files, in_dir);
+    l_files = populate_file_list (10, l_files, in_dir);
     g_assert (l_files);
 
     app = g_new0 (Application, 1);
@@ -325,12 +363,22 @@ int main (int argc, char *argv[])
     // start server
     start_srv (app->evbase, in_dir);
     
+    /*
     pool = client_pool_create (app, 12,
         http_client_create,
         http_client_destroy,
         http_client_set_on_released_cb,
         http_client_check_rediness
     );
+    */
+
+    pool = client_pool_create (app, 3,
+        http_connection_create,
+        http_connection_destroy,
+        http_connection_set_on_released_cb,
+        http_connection_check_rediness
+    );
+
 
     cb = g_new (CBData, 1);
     cb->pool = pool;
@@ -347,6 +395,30 @@ int main (int argc, char *argv[])
 
     g_printf ("Clients usage: \n");
     g_hash_table_foreach (app->h_clients_freq, (GHFunc) print_foreach, NULL);
+
+    for (tmp = g_list_first (l_files); tmp; tmp = g_list_next (tmp)) {
+        FileData *fdata = (FileData *) tmp->data;
+        
+        g_free (fdata->in_name);
+        g_free (fdata->md5);
+        g_free (fdata->url);
+        g_free (fdata->out_name);
+        g_free (fdata);
+    };
+    g_free (in_dir);
+
+    g_free (cb);
+
+    client_pool_destroy (pool);
+    event_del (timeout);
+    event_free (timeout);
+
+    evhttp_free (app->http);
+
+    evdns_base_free (app->dns_base, 0);
+    g_hash_table_destroy (app->h_clients_freq);
+    event_base_free (app->evbase);
+    g_free (app);
 
     return 0;
 }

@@ -442,7 +442,7 @@ static void http_client_connect (HttpClient *http)
     if (http->bev)
         bufferevent_free (http->bev);
 
-    http->bev = bufferevent_socket_new (http->evbase, -1, 0);
+    http->bev = bufferevent_socket_new (http->evbase, -1, BEV_OPT_CLOSE_ON_FREE);
     if (!http->bev) {
         LOG_err (HTTP_LOG, "Failed to create HTTP object!");
     }
