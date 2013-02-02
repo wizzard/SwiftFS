@@ -33,14 +33,7 @@ gpointer http_connection_create (Application *app)
 
     con->is_acquired = FALSE;
 
-    port = evhttp_uri_get_port (con->uri);
-    // if no port is specified, libevent returns -1
-    if (port == -1) {
-        if (uri_is_https (con->uri))
-            port = 443;
-        else
-            port = 80;
-    }
+    port = uri_get_port (con->uri);
 
     LOG_debug (CON_LOG, "Connecting to %s:%d", 
         evhttp_uri_get_host (con->uri),
@@ -82,9 +75,8 @@ gpointer http_connection_create (Application *app)
         return NULL;
     }
     
-    // XXX: config these
-    evhttp_connection_set_timeout (con->evcon, 20);
-    evhttp_connection_set_retries (con->evcon, -1);
+    evhttp_connection_set_timeout (con->evcon, app->conf->timeout);
+    evhttp_connection_set_retries (con->evcon, app->conf->retries);
 
     evhttp_connection_set_closecb (con->evcon, http_connection_on_close, con);
 

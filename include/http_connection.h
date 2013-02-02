@@ -22,16 +22,13 @@ struct _HttpConnection {
     struct evhttp_uri *uri;
     gchar *storage_url;
 
-    // is taken by high level
+    // is used by high level
     gboolean is_acquired;
 };
 
 
 gpointer http_connection_create (Application *app);
 void http_connection_destroy (gpointer data);
-
-gchar *http_connection_get_auth_string (Application *app, 
-        const gchar *method, const gchar *content_type, const gchar *resource, const gchar *time_str);
 
 void http_connection_set_on_released_cb (gpointer client, ClientPool_on_released_cb client_on_released_cb, gpointer ctx);
 gboolean http_connection_check_rediness (gpointer client);

@@ -58,3 +58,20 @@ gboolean uri_is_https (const struct evhttp_uri *uri)
     
     return FALSE;
 }
+
+gint uri_get_port (const struct evhttp_uri *uri)
+{
+    gint port;
+
+    port = evhttp_uri_get_port (uri);
+
+    // if no port is specified, libevent returns -1
+    if (port == -1) {
+        if (uri_is_https (uri))
+            port = 443;
+        else
+            port = 80;
+    }
+
+    return port;
+}

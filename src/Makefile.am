@@ -6,6 +6,7 @@ hydrafs_SOURCES += hfs_fuse.c
 hydrafs_SOURCES += http_connection.c
 hydrafs_SOURCES += http_connection_dir_list.c
 hydrafs_SOURCES += http_connection_file_send.c
+hydrafs_SOURCES += auth_client.c
 hydrafs_SOURCES += http_client.c
 hydrafs_SOURCES += client_pool.c
 hydrafs_SOURCES += file_entry.c

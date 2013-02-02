@@ -80,6 +80,7 @@ typedef struct {
 } AppConf;
 
 typedef struct _Application Application;
+typedef struct _AuthClient AuthClient;
 typedef struct _HttpConnection HttpConnection;
 typedef struct _DirTree DirTree;
 typedef struct _HfsFuse HfsFuse;

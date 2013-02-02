@@ -10,6 +10,10 @@
 gchar *get_random_string (size_t len, gboolean readable);
 gchar *get_md5_sum (char *buf, size_t len);
 
+// return TRUE if URI scheme is HTTPS
 gboolean uri_is_https (const struct evhttp_uri *uri);
+
+//return URI port, or default one (80 for HTTP, 443 for HTTPS)
+gint uri_get_port (const struct evhttp_uri *uri);
 
 #endif
