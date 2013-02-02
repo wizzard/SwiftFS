@@ -189,12 +189,11 @@ struct evhttp_request *http_connection_create_request (HttpConnection *con,
 
 typedef struct {
     HttpConnection *con;
-    HttpConnection_responce_cb responce_cb;
-    HttpConnection_error_cb error_cb;
+    HttpConnection_response_cb response_cb;
     gpointer ctx;
 } RequestData;
 
-static void http_connection_on_responce_cb (struct evhttp_request *req, void *ctx)
+static void http_connection_on_response_cb (struct evhttp_request *req, void *ctx)
 {
     RequestData *data = (RequestData *) ctx;
     struct evbuffer *inbuf;
@@ -205,8 +204,8 @@ static void http_connection_on_responce_cb (struct evhttp_request *req, void *ct
 
     if (!req) {
         LOG_err (CON_LOG, "Request failed !");
-        if (data->error_cb)
-            data->error_cb (data->con, data->ctx);
+        if (data->response_cb)
+            data->response_cb (data->con, data->ctx, NULL, 0, NULL, FALSE);
         goto done;
     }
 
@@ -216,8 +215,8 @@ static void http_connection_on_responce_cb (struct evhttp_request *req, void *ct
             evhttp_request_get_response_code (req) != 202 && evhttp_request_get_response_code (req) != 201) {
         LOG_err (CON_LOG, "Server returned HTTP error: %d !", evhttp_request_get_response_code (req));
         LOG_debug (CON_LOG, "Error str: %s", req->response_code_line);
-        if (data->error_cb)
-            data->error_cb (data->con, data->ctx);
+        if (data->response_cb)
+            data->response_cb (data->con, data->ctx, NULL, 0, NULL, FALSE);
         goto done;
     }
 
@@ -225,8 +224,8 @@ static void http_connection_on_responce_cb (struct evhttp_request *req, void *ct
     buf_len = evbuffer_get_length (inbuf);
     buf = (const char *) evbuffer_pullup (inbuf, buf_len);
     
-    if (data->responce_cb)
-        data->responce_cb (data->con, data->ctx, buf, buf_len, evhttp_request_get_input_headers (req));
+    if (data->response_cb)
+        data->response_cb (data->con, data->ctx, buf, buf_len, evhttp_request_get_input_headers (req), TRUE);
     else
         LOG_msg (CON_LOG, ">>> NO callback function !");
 
@@ -238,8 +237,7 @@ gboolean http_connection_make_request (HttpConnection *con,
     const gchar *resource_path, const gchar *request_str,
     const gchar *http_cmd,
     struct evbuffer *out_buffer,
-    HttpConnection_responce_cb responce_cb,
-    HttpConnection_error_cb error_cb,
+    HttpConnection_response_cb response_cb,
     gpointer ctx)
 {
     struct evhttp_request *req;
@@ -250,8 +248,7 @@ gboolean http_connection_make_request (HttpConnection *con,
     enum evhttp_cmd_type cmd_type;
     
     data = g_new0 (RequestData, 1);
-    data->responce_cb = responce_cb;
-    data->error_cb = error_cb;
+    data->response_cb = response_cb;
     data->ctx = ctx;
     data->con = con;
     
@@ -269,7 +266,7 @@ gboolean http_connection_make_request (HttpConnection *con,
     t = time (NULL);
     strftime (time_str, sizeof (time_str), "%a, %d %b %Y %H:%M:%S GMT", gmtime(&t));
 
-    req = evhttp_request_new (http_connection_on_responce_cb, data);
+    req = evhttp_request_new (http_connection_on_response_cb, data);
     if (!req) {
         LOG_err (CON_LOG, "Failed to create HTTP request object !");
         return FALSE;

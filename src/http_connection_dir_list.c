@@ -135,14 +135,16 @@ static void http_connection_on_directory_listing_error (HttpConnection *con, voi
 }
 
 // Directory read callback function
-static void http_connection_on_directory_listing_data (HttpConnection *con, void *ctx, const gchar *buf, size_t buf_len)
+static void http_connection_on_directory_listing_data (HttpConnection *con, void *ctx, 
+    const gchar *buf, size_t buf_len, 
+    struct evkeyvalq *headers, gboolean success)
 {   
     DirListRequest *dir_req = (DirListRequest *) ctx;
     const gchar *next_marker;
     gchar *req_path;
     gboolean res;
    
-    if (!buf_len) {
+    if (!buf_len || !success) {
         LOG_debug (CON_DIR_LOG, "Directory buffer is empty !");
         //http_connection_on_directory_listing_error (con, (void *) dir_req);
         if (dir_req->directory_listing_callback)
@@ -200,7 +202,6 @@ static void http_connection_on_directory_listing_data (HttpConnection *con, void
     res = http_connection_make_request (dir_req->con, 
         dir_req->resource_path, req_path, "GET", NULL,
         http_connection_on_directory_listing_data,
-        http_connection_on_directory_listing_error, 
         dir_req
     );
     g_free (req_path);
@@ -255,7 +256,6 @@ gboolean http_connection_get_directory_listing (HttpConnection *con, const gchar
     res = http_connection_make_request (con, 
         dir_req->resource_path, req_path, "GET", NULL,
         http_connection_on_directory_listing_data,
-        http_connection_on_directory_listing_error, 
         dir_req
     );
     

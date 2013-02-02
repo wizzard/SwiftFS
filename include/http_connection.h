@@ -58,16 +58,14 @@ typedef void (*HttpConnection_on_entry_sent_cb) (gpointer ctx, gboolean success)
 gboolean http_connection_file_send (HttpConnection *con, int fd, const gchar *resource_path, 
     HttpConnection_on_entry_sent_cb on_entry_sent_cb, gpointer ctx);
 
-typedef void (*HttpConnection_responce_cb) (HttpConnection *con, gpointer ctx, 
-        const gchar *buf, size_t buf_len, struct evkeyvalq *headers);
-typedef void (*HttpConnection_error_cb) (HttpConnection *con, gpointer ctx);
+typedef void (*HttpConnection_response_cb) (HttpConnection *con, gpointer ctx, 
+        const gchar *buf, size_t buf_len, struct evkeyvalq *headers, gboolean success);
 
 gboolean http_connection_make_request (HttpConnection *con, 
     const gchar *resource_path, const gchar *request_str,
     const gchar *http_cmd,
     struct evbuffer *out_buffer,
-    HttpConnection_responce_cb responce_cb,
-    HttpConnection_error_cb error_cb,
+    HttpConnection_response_cb response_cb,
     gpointer ctx);
 
 #endif
