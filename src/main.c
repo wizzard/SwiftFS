@@ -12,7 +12,7 @@
 #define APP_LOG "main"
 
 struct _Application {
-    AppConf *conf;
+    ConfData *conf;
     struct event_base *evbase;
     struct evdns_base *dns_base;
     
@@ -413,7 +413,7 @@ static void application_destroy (Application *app)
     g_free (app->container_name);
     evhttp_uri_free (app->uri);
 
-    g_free (app->conf);
+    conf_destroy (app->conf);
     g_free (app);
     
     ENGINE_cleanup ();

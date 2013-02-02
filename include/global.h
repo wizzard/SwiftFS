@@ -46,6 +46,7 @@
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
+#include <openssl/md5.h>
 
 #include <event2/event.h>
 #include <event2/listener.h>
@@ -67,18 +68,6 @@
 
 #include "config.h" 
 
-typedef struct {
-    gint writers;
-    gint readers;
-    gint ops;
-    gint timeout;
-    gint retries;
-    gint http_port;
-    gint dir_cache_max_time;
-    gint max_requests_per_pool;
-    gboolean use_syslog;
-} AppConf;
-
 typedef struct _Application Application;
 typedef struct _AuthClient AuthClient;
 typedef struct _HttpConnection HttpConnection;
@@ -86,20 +75,14 @@ typedef struct _DirTree DirTree;
 typedef struct _HfsFuse HfsFuse;
 typedef struct _ClientPool ClientPool;
 typedef enum _LogLevel LogLevel;
+typedef struct _ConfData ConfData;
 
 struct event_base *application_get_evbase (Application *app);
 struct evdns_base *application_get_dnsbase (Application *app);
-const gchar *application_get_auth_token (Application *app);
 const gchar *application_get_container_name (Application *app);
 const gchar *application_get_base_path (Application *app);
-struct evhttp_uri *application_get_storage_uri (Application *app);
-const gchar *application_get_host (Application *app);
-int application_get_port (Application *app);
-struct evhttp_uri *application_get_storage_uri (Application *app);
-const gchar *application_get_storage_url_str (Application *app);
 const gchar *application_get_tmp_dir (Application *app);
-AppConf *application_get_conf (Application *app);
-
+ConfData *application_get_conf (Application *app);
 
 ClientPool *application_get_read_client_pool (Application *app);
 ClientPool *application_get_write_client_pool (Application *app);
@@ -108,6 +91,7 @@ DirTree *application_get_dir_tree (Application *app);
 
 #include "log.h" 
 #include "utils.h" 
+#include "conf.h" 
 
 LogLevel log_level;
 

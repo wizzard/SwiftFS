@@ -17,7 +17,7 @@ gchar *get_random_string (size_t len, gboolean readable)
         for (i = 0; i < len; i++)
             out[i] = readable_chars[rand() % strlen (readable_chars)];
     } else {
-        if (!RAND_pseudo_bytes (out, len))
+        if (!RAND_pseudo_bytes ((unsigned char *)out, len))
             return out;
     }
 
@@ -26,13 +26,13 @@ gchar *get_random_string (size_t len, gboolean readable)
     return out;
 }
 
-gchar *get_md5_sum (char *buf, size_t len)
+gchar *get_md5_sum (const char *buf, size_t len)
 {
     unsigned char digest[16];
     gchar *out;
     size_t i;
 
-    MD5 (buf, len, digest);
+    MD5 ((const unsigned char *)buf, len, digest);
 
     out = g_malloc (33);
     for (i = 0; i < 16; ++i)

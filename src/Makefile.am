@@ -1,6 +1,7 @@
 AM_CPPFLAGS = -I$(top_srcdir)/include -DSYSCONFDIR=\""$(sysconfdir)/@PACKAGE@/"\" 
 bin_PROGRAMS = hydrafs
 hydrafs_SOURCES = log.c
+hydrafs_SOURCES += conf.c
 hydrafs_SOURCES += dir_tree.c  
 hydrafs_SOURCES += hfs_fuse.c  
 hydrafs_SOURCES += http_connection.c

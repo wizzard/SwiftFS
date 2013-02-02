@@ -8,7 +8,7 @@
 #include "global.h"
 
 gchar *get_random_string (size_t len, gboolean readable);
-gchar *get_md5_sum (char *buf, size_t len);
+gchar *get_md5_sum (const char *buf, size_t len);
 
 // return TRUE if URI scheme is HTTPS
 gboolean uri_is_https (const struct evhttp_uri *uri);

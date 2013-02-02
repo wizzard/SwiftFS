@@ -2,6 +2,7 @@ hfsincludedir=$(includedir)/hydrafs
 
 hfsinclude_HEADERS = global.h
 hfsinclude_HEADERS += log.h
+hfsinclude_HEADERS += conf.h
 hfsinclude_HEADERS += dir_tree.h 
 hfsinclude_HEADERS += auth_client.h 
 hfsinclude_HEADERS += client_pool.h
