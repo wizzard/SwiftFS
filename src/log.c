@@ -34,13 +34,21 @@ void logger_log_msg (G_GNUC_UNUSED const gchar *file, G_GNUC_UNUSED gint line, G
         g_vsnprintf (out_str, sizeof (out_str), format, args);
     va_end (args);
 
-    if (log_level == LOG_debug)
-        g_fprintf (stdout, "%s [%s] (%s %s:%d) %s\n", ts, subsystem, func, file, line, out_str);
+    if (log_level == LOG_debug) {
+        if (level == LOG_err)
+            g_fprintf (stdout, "%s \033[1;31m[%s]\033[0m  (%s %s:%d) %s\n", ts, subsystem, func, file, line, out_str);
+        else
+            g_fprintf (stdout, "%s [%s] (%s %s:%d) %s\n", ts, subsystem, func, file, line, out_str);
+    }
     else {
         if (use_syslog)
             syslog (log_level == LOG_msg ? LOG_INFO : LOG_ERR, "%s", out_str);
-        else
-            g_fprintf (stdout, "%s\n", out_str);
+        else {
+            if (level == LOG_err)
+                g_fprintf (stdout, "\033[1;31mERROR!\033[0m %s\n", out_str);
+            else
+                g_fprintf (stdout, "%s\n", out_str);
+        }
     }
 
 }

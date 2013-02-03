@@ -275,7 +275,9 @@ gboolean http_connection_make_request_ (HttpConnection *con,
 
     evhttp_add_header (req->output_headers, "X-Auth-Token", con->auth_token);
     evhttp_add_header (req->output_headers, "Host", evhttp_uri_get_host (uri));	
-	//evhttp_add_header (req->output_headers, "Date", time_str);
+	
+    // ask to keep connection opened
+    evhttp_add_header (req->output_headers, "Connection", "keep-alive");
 
     if (out_buffer) {
         evbuffer_add_buffer (req->output_buffer, out_buffer);

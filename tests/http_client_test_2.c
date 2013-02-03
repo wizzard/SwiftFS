@@ -10,15 +10,11 @@
 
 // 1. Create 100 files, fill with random data, get MD5 sum
 // 2. Start HTTP server
-// 3. Send 100 requests to ClientPool
+// 3. Send 100 requests
 // 4. Get parts, save them to output file
 // 4. get Md5 sum and compare with the original MD5 sum
-//
-//
-// XXX:
-// BUG: if disconnection event is received after HTTPClient is acquired by the new client, then request is not executed
 
-#define POOL_TEST "pool_test"
+#define HTTP_TEST "http_test2"
 typedef struct {
     gchar *in_name;
     gchar *md5;
@@ -28,10 +24,10 @@ typedef struct {
     FILE *fout;
 
     gboolean checked;
+    gboolean sent;
 } FileData;
 
 typedef struct {
-    ClientPool *pool;
     GList *l_files;
 } CBData;
 
@@ -39,16 +35,15 @@ struct _Application {
     struct event_base *evbase;
     struct evdns_base *dns_base;
     ConfData *conf;
-    struct evhttp *http;
+    struct evhttp *http_srv;
+    struct event *timeout;
 
     AuthClient *auth_client;
 
-    gboolean is_http_client;
-    gint pool_count;
     gint files_count;
 
     GList *l_files;
-    GHashTable *h_clients_freq; // keeps the number of requests for each HTTP client
+    HttpClient *http;
 };
 
 static Application *app;
@@ -68,7 +63,7 @@ static GList *populate_file_list (gint max_files, GList *l_files, gchar *in_dir)
     g_assert (out_dir);
 
 
-    LOG_debug (POOL_TEST, "In dir: %s   Out dir: %s", in_dir, out_dir);
+    LOG_debug (HTTP_TEST, "In dir: %s   Out dir: %s", in_dir, out_dir);
 
     for (i = 0; i < max_files; i++) {
         char *bytes;
@@ -76,6 +71,7 @@ static GList *populate_file_list (gint max_files, GList *l_files, gchar *in_dir)
 
         fdata = g_new0 (FileData, 1);
         fdata->checked = FALSE;
+        fdata->sent = FALSE;
         fdata->id = i;
         bytes_len = g_random_int_range (100000, 1000000);
         bytes = g_malloc (bytes_len + 1);
@@ -94,7 +90,7 @@ static GList *populate_file_list (gint max_files, GList *l_files, gchar *in_dir)
         fdata->fout = fopen (fdata->out_name, "w");
         g_assert (fdata->fout);
 
-        LOG_debug (POOL_TEST, "%s -> %s, size: %u", fdata->in_name, fdata->md5, bytes_len);
+        LOG_debug (HTTP_TEST, "%s -> %s, size: %u", fdata->in_name, fdata->md5, bytes_len);
 
         g_free (bytes);
         
@@ -128,11 +124,12 @@ static void on_last_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpoi
     int fd;
     struct stat st;
     struct evbuffer *evb = NULL;
+    struct timeval tv;
 
     buf_len = evbuffer_get_length (input_buf);
     buf = (gchar *) evbuffer_pullup (input_buf, buf_len);
 
-    LOG_debug (POOL_TEST, "%p Last chunk ID:%d len: %zu", http, fdata->id, buf_len);
+    LOG_debug (HTTP_TEST, "%p Last chunk ID:%d len: %zu", http, fdata->id, buf_len);
 
     g_assert (fwrite (buf, 1, buf_len, fdata->fout) == buf_len);
 
@@ -149,7 +146,7 @@ static void on_last_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpoi
 
     md5 = get_md5_sum ((const char *)evbuffer_pullup (evb, -1), evbuffer_get_length (evb));
 
-    LOG_debug (POOL_TEST, "%s == %s", fdata->md5, md5);
+    LOG_debug (HTTP_TEST, "%s == %s", fdata->md5, md5);
     g_assert_cmpstr (fdata->md5, ==, md5);
     g_free (md5);
 
@@ -162,8 +159,14 @@ static void on_last_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpoi
 
     if (check_list (app->l_files)) {
         event_base_loopbreak (app->evbase);
-        LOG_debug (POOL_TEST, "Test passed !");
+        LOG_debug (HTTP_TEST, "Test passed !");
     }
+
+    evutil_timerclear(&tv);
+    tv.tv_sec = g_random_int_range (0, 10);
+    tv.tv_usec = 500;
+    event_add (app->timeout, &tv);
+
 }
 
 static void on_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpointer ctx)
@@ -180,129 +183,38 @@ static void on_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpointer 
 
     evbuffer_drain (input_buf, buf_len);
     
-    //LOG_debug (POOL_TEST, "chunk ID:%d len: %zu", fdata->id, buf_len);
 }
 
-static void on_get_http_client (gpointer client, gpointer pool_ctx)
+static void send_request (FileData *fdata)
 {
-    FileData *fdata = (FileData *) pool_ctx;
-    HttpClient *http = (HttpClient *) client;
-    gpointer p;
-    gint i;
 
-    LOG_debug (POOL_TEST, "Got http client %p, sending request for: %s", http, fdata->in_name);
 
-    if ((p = g_hash_table_lookup (app->h_clients_freq, http)) != NULL) {
-        i = GPOINTER_TO_INT (p) + 1;
-        g_hash_table_replace (app->h_clients_freq, http, GINT_TO_POINTER (i));
-    } else {
-        i = 1;
-        g_hash_table_insert (app->h_clients_freq, http, GINT_TO_POINTER (i));
-    }
+    http_client_acquire (app->http);
 
-    http_client_acquire (http);
+    http_client_request_reset (app->http);
 
-    http_client_request_reset (http);
+    http_client_set_cb_ctx (app->http, fdata);
+    http_client_set_on_chunk_cb (app->http, on_chunk_cb);
+    http_client_set_on_last_chunk_cb (app->http, on_last_chunk_cb);
 
-    http_client_set_cb_ctx (http, fdata);
-    http_client_set_on_chunk_cb (http, on_chunk_cb);
-    http_client_set_on_last_chunk_cb (http, on_last_chunk_cb);
+    http_client_set_output_length (app->http, 0);
 
-    http_client_set_output_length (http, 0);
-
-    http_client_start_request_to_storage_url (http, Method_get, fdata->in_name);
+    http_client_start_request_to_storage_url (app->http, Method_get, fdata->in_name);
 }
-/*{{{*/
-static void on_connection_data (HttpConnection *con, void *ctx, 
-    const gchar *buf, size_t buf_len, 
-    struct evkeyvalq *headers, gboolean success)
-{
-    FileData *fdata = (FileData *) ctx;
-    gchar *md5;
-    int fd;
-    struct stat st;
-    struct evbuffer *evb = NULL;
-
-    g_assert (success);
-
-    LOG_debug (POOL_TEST, "Got data ID:%d len: %zu", fdata->id, buf_len);
-
-    g_assert (fwrite (buf, 1, buf_len, fdata->fout) == buf_len);
-
-    // close output file
-    fclose (fdata->fout);
-
-	g_assert ((fd = open(fdata->out_name, O_RDONLY)) >= 0);
-    g_assert (fstat(fd, &st) >= 0);
-
-    evb = evbuffer_new();
-    evbuffer_add_file(evb, fd, 0, st.st_size);
-
-    md5 = get_md5_sum ((const char *)evbuffer_pullup (evb, -1), evbuffer_get_length (evb));
-
-    LOG_debug (POOL_TEST, "%s == %s", fdata->md5, md5);
-    g_assert_cmpstr (fdata->md5, ==, md5);
-    g_free (md5);
-
-    evbuffer_free (evb);
-    close (fd);
-
-    // release HTTP client
-    http_connection_release (con);
-
-    fdata->checked = TRUE;
-
-    if (check_list (app->l_files)) {
-        event_base_loopbreak (app->evbase);
-        LOG_debug (POOL_TEST, "Test passed !");
-    }
-}
-
-static void on_get_http_connection (gpointer client, gpointer pool_ctx)
-{
-    FileData *fdata = (FileData *) pool_ctx;
-    HttpConnection *con = (HttpConnection *) client;
-    gpointer p;
-    gint i;
-    gboolean res;
-
-    LOG_debug (POOL_TEST, "Got http connection %p, sending request for: %s", con, fdata->in_name);
-
-    if ((p = g_hash_table_lookup (app->h_clients_freq, con)) != NULL) {
-        i = GPOINTER_TO_INT (p) + 1;
-        g_hash_table_replace (app->h_clients_freq, con, GINT_TO_POINTER (i));
-    } else {
-        i = 1;
-        g_hash_table_insert (app->h_clients_freq, con, GINT_TO_POINTER (i));
-    }
-
-    http_connection_acquire (con);
-
-    res = http_connection_make_request_to_storage_url (con, 
-        fdata->in_name, "GET", NULL,
-        on_connection_data,
-        fdata
-    );
-
-    g_assert (res);
-}
-/*}}}*/
 
 static void on_output_timer (evutil_socket_t fd, short event, void *ctx)
 {
-    gint i;
-    GList *l;
+    GList *tmp;
 
-    CBData *cb = (CBData *) ctx;
-    ClientPool *pool = cb->pool;
-
-    for (l = g_list_first (cb->l_files); l; l = g_list_next (l)) {
-        FileData *fd = (FileData *) l->data;
-        if (app->is_http_client)
-            g_assert (client_pool_get_client (pool, on_get_http_client, fd));
-        else
-            g_assert (client_pool_get_client (pool, on_get_http_connection, fd));
+    for (tmp = g_list_first (app->l_files); tmp; tmp = g_list_next (tmp)) {
+        FileData *fdata = (FileData *) tmp->data;
+        if (!fdata->sent) {
+            fdata->sent = TRUE;
+            send_request (fdata);
+            return;
+        }
     }
+
 }
 
 /*{{{ http server */
@@ -334,7 +246,7 @@ static void on_srv_storage_request (struct evhttp_request *req, void *ctx)
     evb = evbuffer_new();
 
     //path = g_strdup_printf ("%s/%s", dir, decoded_path);
-    LOG_debug (POOL_TEST, "SRV: received %d bytes. Req: %s, path: %s", evbuffer_get_length (in), evhttp_request_get_uri (req), path);
+    LOG_debug (HTTP_TEST, "SRV: received %d bytes. Req: %s, path: %s", evbuffer_get_length (in), evhttp_request_get_uri (req), path);
 
     f = fopen (path, "r");
     g_free (decoded_path);
@@ -347,10 +259,10 @@ static void on_srv_storage_request (struct evhttp_request *req, void *ctx)
         total_bytes += bytes_read;
     }
 
-    //evhttp_add_header (req->output_headers, "Connection", "close");
+    evhttp_add_header (req->output_headers, "Connection", "close");
     evhttp_send_reply(req, 200, "OK", evb);
 
-    LOG_debug (POOL_TEST, "Total bytes sent: %u", total_bytes);
+    LOG_debug (HTTP_TEST, "Total bytes sent: %u", total_bytes);
 
     fclose(f);
     evbuffer_free(evb);
@@ -368,7 +280,7 @@ static void on_srv_gen_request (struct evhttp_request *req, void *ctx)
 	const char *uri = evhttp_request_get_uri(req);
     
     if (!strstr (uri, "/storage/")) {
-        LOG_debug (POOL_TEST, "%s", uri);
+        LOG_debug (HTTP_TEST, "%s", uri);
         g_assert_not_reached ();
     }
 
@@ -377,14 +289,14 @@ static void on_srv_gen_request (struct evhttp_request *req, void *ctx)
 
 static void start_srv (struct event_base *base, gchar *in_dir)
 {
-    app->http = evhttp_new (base);
-    g_assert (app->http);
-    evhttp_bind_socket (app->http, "127.0.0.1", 8011);
-    evhttp_set_cb (app->http, "/storage/", on_srv_storage_request, in_dir);
-    evhttp_set_cb (app->http, "/get_auth", on_srv_auth_request, NULL);
-    evhttp_set_gencb (app->http, on_srv_gen_request, in_dir);
+    app->http_srv = evhttp_new (base);
+    g_assert (app->http_srv);
+    evhttp_bind_socket (app->http_srv, "127.0.0.1", 8011);
+    evhttp_set_cb (app->http_srv, "/storage/", on_srv_storage_request, in_dir);
+    evhttp_set_cb (app->http_srv, "/get_auth", on_srv_auth_request, NULL);
+    evhttp_set_gencb (app->http_srv, on_srv_gen_request, in_dir);
 
-    LOG_debug (POOL_TEST, "SRV: started");
+    LOG_debug (HTTP_TEST, "SRV: started");
 }
 
 /*}}}*/
@@ -413,18 +325,10 @@ AuthClient *application_get_auth_client (Application *app)
 {
     return app->auth_client;
 }
-
-static gboolean print_foreach (gconstpointer a, gconstpointer b)
-{
-    g_printf ("%p: %i\n", a, GPOINTER_TO_INT (b));
-    return FALSE;
-}
 /*}}}*/
 
 int main (int argc, char *argv[])
 {
-    ClientPool *pool;
-    struct event *timeout;
     struct timeval tv;
     GList *l_files = NULL;
     CBData *cb;
@@ -440,9 +344,7 @@ int main (int argc, char *argv[])
     g_assert (in_dir);
 
     app = g_new0 (Application, 1);
-    app->pool_count = 3;
     app->files_count = 10;
-    app->h_clients_freq = g_hash_table_new (g_direct_hash, g_direct_equal);
     app->evbase = event_base_new ();
 	app->dns_base = evdns_base_new (app->evbase, 1);
 
@@ -476,48 +378,22 @@ int main (int argc, char *argv[])
     g_assert (l_files);
 
     app->l_files = l_files;
-
-    app->is_http_client = TRUE;
-    if (argc > 1) {
-        if (!strcmp (argv[1], "http_connection")) {
-            app->is_http_client = FALSE;
-        }
-    }
+    app->http = http_client_create (app);
 
     // start server
     start_srv (app->evbase, in_dir);
     
-    if (app->is_http_client) {
-        pool = client_pool_create (app, app->pool_count,
-            http_client_create,
-            http_client_destroy,
-            http_client_set_on_released_cb,
-            http_client_check_rediness
-        );
-    } else {
-        pool = client_pool_create (app, app->pool_count,
-            http_connection_create,
-            http_connection_destroy,
-            http_connection_set_on_released_cb,
-            http_connection_check_rediness
-        );
-    }
-
     cb = g_new (CBData, 1);
-    cb->pool = pool;
     cb->l_files = l_files;
     
-    timeout = evtimer_new (app->evbase, on_output_timer, cb);
+    app->timeout = evtimer_new (app->evbase, on_output_timer, cb);
 
     evutil_timerclear(&tv);
     tv.tv_sec = 0;
     tv.tv_usec = 500;
-    event_add (timeout, &tv);
+    event_add (app->timeout, &tv);
 
     event_base_dispatch (app->evbase);
-
-    g_printf ("Clients usage: \n");
-    g_hash_table_foreach (app->h_clients_freq, (GHFunc) print_foreach, NULL);
 
     for (tmp = g_list_first (l_files); tmp; tmp = g_list_next (tmp)) {
         FileData *fdata = (FileData *) tmp->data;
@@ -532,15 +408,13 @@ int main (int argc, char *argv[])
     g_free (cb);
 
     evhttp_uri_free (uri);
-    client_pool_destroy (pool);
-    event_del (timeout);
-    event_free (timeout);
+    event_del (app->timeout);
+    event_free (app->timeout);
 
-    evhttp_free (app->http);
+    evhttp_free (app->http_srv);
     auth_client_destroy (app->auth_client);
 
     evdns_base_free (app->dns_base, 0);
-    g_hash_table_destroy (app->h_clients_freq);
     event_base_free (app->evbase);
 
     conf_destroy (app->conf);

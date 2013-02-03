@@ -37,6 +37,10 @@ void file_entry_destroy (FileEntry *fentry)
 void file_entry_release (FileEntry *fentry)
 {
     fentry->released = TRUE;
+
+    // send .manifest file if there more than 1 part uploaded
+    if (fentry->parts > 1) {
+    }
 }
 
 // Add data to file entry piece buffer

@@ -381,7 +381,7 @@ static void http_client_event_cb (struct bufferevent *bev, short what, void *ctx
 {
     HttpClient *http = (HttpClient *) ctx;
     
-    LOG_debug (HTTP_LOG, "Disconnection event: %d !", what);
+    LOG_debug (HTTP_LOG, "Disconnection event: %d ! %p", what, http);
 
     http->connection_state = C_disconnected;
     // XXX: reset
@@ -438,8 +438,10 @@ static void http_client_connect (HttpClient *http)
 {
     int port;
     
-    if (http->connection_state == C_connecting)
+    if (http->connection_state == C_connecting) {
+        LOG_err (HTTP_LOG, "%p Wrong connection state: %d", http, http->connection_state);
         return;
+    }
 
     if (http->bev)
         bufferevent_free (http->bev);
@@ -605,6 +607,9 @@ static gboolean http_client_send_initial_request (HttpClient *http)
         );
     }
 
+    // ask to keep connection opened
+    evbuffer_add_printf (out_buf, "Connection: %s\r\n", "keep-alive");
+
     // end line
     evbuffer_add_printf (out_buf, "\r\n");
 
@@ -620,7 +625,6 @@ static gboolean http_client_send_initial_request (HttpClient *http)
 
     // send it
     bufferevent_write_buffer (http->bev, out_buf);
-
 
     // free memory
     evbuffer_free (out_buf);
@@ -648,6 +652,7 @@ gboolean http_client_start_request_ (HttpClient *http, HttpClientRequestMethod m
     if (!http_client_is_connected (http)) {
         http_client_connect (http);
     } else {
+        LOG_err (HTTP_LOG, "Already connected");
         return http_client_send_initial_request (http);
     }
 

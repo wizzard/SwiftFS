@@ -196,10 +196,10 @@ static void http_connection_on_directory_listing_data (HttpConnection *con, void
     }
     
     // execute HTTP request
-    req_path = g_strdup_printf ("%s/?delimiter=/&prefix=%s&max-keys=%d&marker=%s&format=xml", 
-            application_get_base_path (dir_req->app), dir_req->dir_path, dir_req->max_keys, next_marker);
+    req_path = g_strdup_printf ("/?delimiter=/&prefix=%s&max-keys=%d&marker=%s&format=xml", 
+        dir_req->dir_path, dir_req->max_keys, next_marker);
     
-    res = http_connection_make_request (dir_req->con, 
+    res = http_connection_make_request_to_storage_url (dir_req->con, 
         req_path, "GET", NULL,
         http_connection_on_directory_listing_data,
         dir_req
@@ -250,10 +250,10 @@ gboolean http_connection_get_directory_listing (HttpConnection *con, const gchar
         dir_req->resource_path = g_strdup_printf ("/");
     }
    
-    req_path = g_strdup_printf ("%s/?delimiter=/&prefix=%s&max-keys=%d&format=xml", 
-            application_get_base_path (dir_req->app), dir_req->dir_path, dir_req->max_keys);
+    req_path = g_strdup_printf ("/?delimiter=/&prefix=%s&max-keys=%d&format=xml", 
+        dir_req->dir_path, dir_req->max_keys);
 
-    res = http_connection_make_request (con, 
+    res = http_connection_make_request_to_storage_url (con, 
         req_path, "GET", NULL,
         http_connection_on_directory_listing_data,
         dir_req

@@ -27,9 +27,20 @@ static void http_connection_on_file_send_error (HttpConnection *con, void *ctx)
 }
 
 static void http_connection_on_file_send_done (HttpConnection *con, void *ctx, 
-        const gchar *buf, size_t buf_len, G_GNUC_UNUSED struct evkeyvalq *headers)
+        const gchar *buf, size_t buf_len, G_GNUC_UNUSED struct evkeyvalq *headers, gboolean success)
 {
     FileSendData *data = (FileSendData *) ctx;
+
+    if (!success) {
+        LOG_err (CON_SEND_LOG, "Failed to send file! op: %p", data->ctx);
+        
+        http_connection_release (con);
+
+        if (data && data->on_entry_sent_cb)
+            data->on_entry_sent_cb (ctx, FALSE);
+
+        goto done;
+    }
 
     LOG_debug (CON_SEND_LOG, "File is sent! op: %p", data->ctx);
 
@@ -38,6 +49,7 @@ static void http_connection_on_file_send_done (HttpConnection *con, void *ctx,
     else
         LOG_debug (CON_SEND_LOG, "No callback function !");
 
+done:
     http_connection_release (con);
     
     g_free (data);
@@ -46,7 +58,6 @@ static void http_connection_on_file_send_done (HttpConnection *con, void *ctx,
 gboolean http_connection_file_send (HttpConnection *con, int fd, const gchar *resource_path, 
     HttpConnection_on_entry_sent_cb on_entry_sent_cb, gpointer ctx)
 {
-    gchar *req_path;
     gboolean res;
     FileSendData *data;
     struct evbuffer *output_buf;
@@ -57,8 +68,6 @@ gboolean http_connection_file_send (HttpConnection *con, int fd, const gchar *re
     data->ctx = ctx;
 
     LOG_debug (CON_SEND_LOG, "Sending file.. %p, fd: %d", data->ctx, fd);
-
-    req_path = g_strdup_printf ("%s", resource_path);
 
     if (fstat (fd, &st) < 0) {
         LOG_err (CON_SEND_LOG, "Failed to stat temp file: %d", fd);
@@ -73,18 +82,16 @@ gboolean http_connection_file_send (HttpConnection *con, int fd, const gchar *re
         return FALSE;
     }
 
-    LOG_debug (CON_SEND_LOG, "[%p %p] Sending %s file, req: %s, %"OFF_FMT"  buff: %zd", con, data, 
-        resource_path, req_path, st.st_size, evbuffer_get_length (output_buf));
+    LOG_debug (CON_SEND_LOG, "[%p %p] Sending %s file, %"OFF_FMT"  buff: %zd", con, data, 
+        resource_path,  st.st_size, evbuffer_get_length (output_buf));
 
-    res = http_connection_make_request (con, 
-        resource_path, req_path, "PUT", 
+    res = http_connection_make_request_to_storage_url (con, 
+        resource_path, "PUT", 
         output_buf,
         http_connection_on_file_send_done,
-        http_connection_on_file_send_error, 
         data
     );
 
-    g_free (req_path);
     evbuffer_free (output_buf);
 
     if (!res) {

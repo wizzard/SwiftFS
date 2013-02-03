@@ -894,7 +894,7 @@ void dir_tree_file_write (DirTree *dtree, fuse_ino_t ino,
 
         op_data->en = en;
         op_data->op_in_progress = TRUE;
-        snprintf (filename, sizeof (filename), "%s/ffs.XXXXXX", application_get_tmp_dir (dtree->app));
+        snprintf (filename, sizeof (filename), "%s/ffs.XXXXXX", conf_get_string (dtree->conf, "filesystem.cache_dir"));
         op_data->tmp_write_fd = mkstemp (filename);
         if (op_data->tmp_write_fd < 0) {
             LOG_err (DIR_TREE_LOG, "Failed to create tmp file !");

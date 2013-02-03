@@ -9,6 +9,8 @@
 struct _AuthClient {
     Application *app;
     ConfData *conf;
+    struct bufferevent *bev;
+    struct evhttp_connection *evcon;
 
     const struct evhttp_uri *auth_server_uri;
     time_t auth_data_time; // time when Auth data was received
@@ -40,6 +42,8 @@ AuthClient *auth_client_create (Application *app, const struct evhttp_uri *auth_
     auth_client->storage_uri = NULL;
     auth_client->is_requesting = FALSE;
     auth_client->l_get_data = NULL;
+    auth_client->bev = NULL;
+    auth_client->evcon = NULL;
 
     return auth_client;
 }
@@ -50,21 +54,24 @@ void auth_client_destroy (AuthClient *auth_client)
         g_free (auth_client->auth_token);
     if (auth_client->storage_uri)
         g_free (auth_client->storage_uri);
+  //  freed in evhttp_connection_free
+  //  if (auth_client->bev)
+  //      bufferevent_free (auth_client->bev);
+    if (auth_client->evcon)
+        evhttp_connection_free (auth_client->evcon);
     g_free (auth_client);
 }
 
 void auth_client_get_data (AuthClient *auth_client, gboolean force, AuthClient_on_data on_data, const gpointer ctx)
 {
     int port;
-    struct bufferevent *bev;
-    struct evhttp_connection *evcon;
     time_t now = time (NULL);
     struct evhttp_request *req;
     int res;
     AuthData *adata;
 
     // check if auth data is still valid
-    if (!force && now > auth_client->auth_data_time && now - auth_client->auth_data_time <= conf_get_uint (auth_client->conf, "auth.ttl")) {
+    if (!force && now >= auth_client->auth_data_time && now - auth_client->auth_data_time <= conf_get_uint (auth_client->conf, "auth.ttl")) {
         LOG_debug (AUTH_LOG, "Returning auth data from cache");
         on_data (ctx, TRUE, auth_client->auth_token, auth_client->storage_uri);
         return;
@@ -93,7 +100,7 @@ void auth_client_get_data (AuthClient *auth_client, gboolean force, AuthClient_o
 		ssl_ctx = SSL_CTX_new (SSLv23_method());
 		ssl = SSL_new (ssl_ctx);
 
-		bev = bufferevent_openssl_socket_new (
+		auth_client->bev = bufferevent_openssl_socket_new (
             application_get_evbase (auth_client->app), 
             -1,
             ssl,
@@ -102,13 +109,13 @@ void auth_client_get_data (AuthClient *auth_client, gboolean force, AuthClient_o
         );
     // create HTTP connection to Auth server
     } else {
-		bev = bufferevent_socket_new (
+		auth_client->bev = bufferevent_socket_new (
             application_get_evbase (auth_client->app),
             -1,
 		    BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
     }
 
-    if (!bev) {
+    if (!auth_client->bev) {
         LOG_err (AUTH_LOG, "Failed to create bufferevent!");
         on_data (ctx, FALSE, NULL, NULL);
         return;
@@ -116,24 +123,24 @@ void auth_client_get_data (AuthClient *auth_client, gboolean force, AuthClient_o
 
     port = uri_get_port (auth_client->auth_server_uri);
 
-    evcon = evhttp_connection_base_bufferevent_new (
+    auth_client->evcon = evhttp_connection_base_bufferevent_new (
         application_get_evbase (auth_client->app),
         application_get_dnsbase (auth_client->app),
-        bev,
+        auth_client->bev,
         evhttp_uri_get_host (auth_client->auth_server_uri),
         port
     );
 
-    if (!evcon) {
+    if (!auth_client->evcon) {
         LOG_err (AUTH_LOG, "Failed to create evhttp_connection!");
         on_data (ctx, FALSE, NULL, NULL);
         return;
     }
 
-    evhttp_connection_set_timeout (evcon, conf_get_int (auth_client->conf, "connection.timeout"));
-    evhttp_connection_set_retries (evcon, conf_get_int (auth_client->conf, "connection.retries"));
+    evhttp_connection_set_timeout (auth_client->evcon, conf_get_int (auth_client->conf, "connection.timeout"));
+    evhttp_connection_set_retries (auth_client->evcon, conf_get_int (auth_client->conf, "connection.retries"));
 
-    evhttp_connection_set_closecb (evcon, auth_client_on_close_cb, auth_client);
+    evhttp_connection_set_closecb (auth_client->evcon, auth_client_on_close_cb, auth_client);
 
     // create request object
     req = evhttp_request_new (auth_client_on_response_cb, auth_client);
@@ -152,7 +159,7 @@ void auth_client_get_data (AuthClient *auth_client, gboolean force, AuthClient_o
     LOG_debug (AUTH_LOG, "Sending request to Auth server: %s:%i %s", 
         evhttp_uri_get_host (auth_client->auth_server_uri), port, evhttp_uri_get_path (auth_client->auth_server_uri));
     // send request to Auth server
-    res = evhttp_make_request (evcon, req, EVHTTP_REQ_GET, evhttp_uri_get_path (auth_client->auth_server_uri));
+    res = evhttp_make_request (auth_client->evcon, req, EVHTTP_REQ_GET, evhttp_uri_get_path (auth_client->auth_server_uri));
 
     if (res < 0) {
         LOG_err (AUTH_LOG, "Failed execute HTTP request !");
@@ -179,8 +186,8 @@ static void auth_client_on_response_cb (struct evhttp_request *req, void *ctx)
     const char *buf;
     size_t buf_len;
     GList *l;
-    gchar *storage_url;
-    gchar *auth_token;
+    const gchar *storage_url;
+    const gchar *auth_token;
     struct evkeyvalq *headers;
     gboolean success = FALSE;
 
@@ -234,6 +241,7 @@ static void auth_client_on_response_cb (struct evhttp_request *req, void *ctx)
 
     // set as success
     success = TRUE;
+    auth_client->auth_data_time = time (NULL);
 
     LOG_debug (AUTH_LOG, "Successfully got new AuthToken and StorageUrl: %s", storage_url);
 

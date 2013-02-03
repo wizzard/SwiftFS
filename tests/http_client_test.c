@@ -44,8 +44,12 @@ typedef struct {
 struct _Application {
     struct event_base *evbase;
     struct evdns_base *dns_base;
-    AppConf *conf;
+    ConfData *conf;
+
+    AuthClient *auth_client;
 };
+
+static Application *app;
 
 #define HTTP_TEST "http_test"
 
@@ -59,9 +63,14 @@ struct evdns_base *application_get_dnsbase (Application *app)
     return app->dns_base;
 }
 
-AppConf *application_get_conf (Application *app)
+ConfData *application_get_conf (Application *app)
 {
     return app->conf;
+}
+
+AuthClient *application_get_auth_client (Application *app)
+{
+    return app->auth_client;
 }
 
 
@@ -252,7 +261,6 @@ static void start_srv (OutData *out)
         LOG_err (HTTP_TEST, "OPS !");
 }
 
-
 void on_input_data_cb (HttpClient *http, struct evbuffer *input_buf, gpointer ctx)
 {
     struct evbuffer *in_buf = (struct evbuffer *) ctx;
@@ -267,7 +275,6 @@ static void run_responce_test (struct event_base *evbase, struct evdns_base *dns
     OutData *out;
     struct evbuffer *in_buf;
     HttpClient *http;
-    Application *app;
 
     LOG_debug (HTTP_TEST, "===================== TEST ID : %d  =======================", test_id);
     out = g_new0 (OutData, 1);
@@ -280,11 +287,12 @@ static void run_responce_test (struct event_base *evbase, struct evdns_base *dns
     //http = http_client_create (app);
     in_buf = evbuffer_new ();
 
+    http = http_client_create (app);
     http_client_set_cb_ctx (http, in_buf);
     http_client_set_on_chunk_cb (http, on_input_data_cb);
     http_client_set_output_length (http, 1);
 
-    http_client_start_request (http, Method_get, "http://127.0.0.1:8080/index.html");
+    http_client_start_request_to_storage_url (http, Method_get, "/index.html");
     
     event_base_dispatch (evbase);
     
@@ -332,7 +340,7 @@ static void on_http_close (HttpClient *http, void *ctx)
  //   http_client_set_output_length (out->http, 1);
  //   http_client_add_output_data (out->http, &c, 1);
 
-    http_client_start_request (out->http, Method_get, "http://127.0.0.1:80/index.html");
+    http_client_start_request_to_storage_url (out->http, Method_get, "/index.html");
 }
 
 static void run_request_test (struct event_base *evbase, struct evdns_base *dns_base, TestID test_id)
@@ -361,7 +369,7 @@ static void run_request_test (struct event_base *evbase, struct evdns_base *dns_
     //http_client_set_output_length (out->http, 1);
     //http_client_add_output_data (out->http, &c, 1);
 
-    http_client_start_request (out->http, Method_get, "http://127.0.0.1:80/index.html");
+    http_client_start_request_to_storage_url (out->http, Method_get, "/index.html");
     
     event_base_dispatch (evbase);
     
@@ -389,11 +397,42 @@ int main (int argc, char *argv[])
     struct evdns_base *dns_base;
     int i;
     int test_id = -1;
+    struct evhttp_uri *uri;
 
     event_set_mem_functions (g_malloc, g_realloc, g_free);
 
     evbase = event_base_new ();
 	dns_base = evdns_base_new (evbase, 1);
+
+    app = g_new0 (Application, 1);
+    app->evbase = evbase;
+	app->dns_base = dns_base;
+
+        app->conf = conf_create ();
+        conf_add_boolean (app->conf, "log.use_syslog", TRUE);
+        
+        conf_add_uint (app->conf, "auth.ttl", 85800);
+        
+        conf_add_int (app->conf, "pool.writers", 2);
+        conf_add_int (app->conf, "pool.readers", 2);
+        conf_add_int (app->conf, "pool.operations", 4);
+        conf_add_uint (app->conf, "pool.max_requests_per_pool", 100);
+
+        conf_add_int (app->conf, "connection.timeout", 20);
+        conf_add_int (app->conf, "connection.retries", -1);
+
+        conf_add_uint (app->conf, "filesystem.dir_cache_max_time", 5);
+        conf_add_boolean (app->conf, "filesystem.cache_enabled", TRUE);
+        conf_add_string (app->conf, "filesystem.cache_dir", "/tmp/hydrafs");
+        conf_add_string (app->conf, "filesystem.cache_dir_max_size", "1Gb");
+
+        conf_add_boolean (app->conf, "statistics.enabled", TRUE);
+        conf_add_int (app->conf, "statistics.port", 8011);
+
+    conf_add_string (app->conf, "auth.user", "test");
+    conf_add_string (app->conf, "auth.key", "test");
+    uri = evhttp_uri_parse ("http://127.0.0.1:8011/get_auth");
+    app->auth_client = auth_client_create (app, uri);
     
     if (argc > 1)
         test_id = atoi (argv[1]);

@@ -184,15 +184,15 @@ static gint application_finish_initialization_and_run (Application *app)
 {
     struct sigaction sigact;
 
-    auth_client = auth_client_create (app, app->auth_uri);
-    if (!auth_client) {
+    app->auth_client = auth_client_create (app, app->auth_uri);
+    if (!app->auth_client) {
         LOG_err (APP_LOG, "Failed to create AuthClient !");
         event_base_loopexit (app->evbase, NULL);
         return -1;
     }
 
     // create ClientPool for reading operations
-    app->read_client_pool = client_pool_create (app, app->conf->readers,
+    app->read_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.readers"),
         http_client_create,
         http_client_destroy,
         http_client_set_on_released_cb,
@@ -205,7 +205,7 @@ static gint application_finish_initialization_and_run (Application *app)
     }
 
     // create ClientPool for writing operations
-    app->write_client_pool = client_pool_create (app, app->conf->writers,
+    app->write_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.writers"),
         http_connection_create,
         http_connection_destroy,
         http_connection_set_on_released_cb,
@@ -218,7 +218,7 @@ static gint application_finish_initialization_and_run (Application *app)
     }
 
     // create ClientPool for various operations
-    app->ops_client_pool = client_pool_create (app, app->conf->ops,
+    app->ops_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.operations"),
         http_connection_create,
         http_connection_destroy,
         http_connection_set_on_released_cb,
@@ -287,22 +287,6 @@ static gint application_finish_initialization_and_run (Application *app)
     return 0;
 }
 
-// AuthData
-static void application_on_auth_data_cb (gpointer ctx, gboolean success, 
-    const gchar *auth_token, const struct evhttp_uri *storage_uri)
-{
-    Application *app = (Application *)ctx;
-
-    if (!success) {
-        LOG_err (APP_LOG, "Failed to get AuthToken !");
-        exit (1);
-    }
-
-
-    
-        application_finish_initialization_and_run (app);
-}
-
 static void application_destroy (Application *app)
 {
     // destroy Fuse
@@ -333,9 +317,8 @@ static void application_destroy (Application *app)
     event_base_free (app->evbase);
 
     g_free (app->mountpoint);
-    g_free (app->tmp_dir);
     g_free (app->container_name);
-    evhttp_uri_free (app->uri);
+    evhttp_uri_free (app->auth_uri);
 
     conf_destroy (app->conf);
     g_free (app);
@@ -384,42 +367,6 @@ int main (int argc, char *argv[])
     // init main app structure
     app = g_new0 (Application, 1);
     app->evbase = event_base_new ();
-    app->auth_token = NULL;
-
-    app->conf = conf_create ();
-    // parse conf file
-    if (stat (conf_path, &st) == -1) {
-        // set default values
-        LOG_msg (APP_LOG, "Configuration file not found, using default settings.");
-        
-        conf_add_boolean (app->conf, "log.use_syslog", TRUE);
-        
-        conf_add_uint (app->conf, "auth.ttl", 85800);
-        
-        conf_add_int (app->conf, "pool.writers", 2);
-        conf_add_int (app->conf, "pool.readers", 2);
-        conf_add_int (app->conf, "pool.operations", 4);
-        conf_add_uint (app->conf, "pool.max_requests_per_pool", 100);
-
-        conf_add_int (app->conf, "connection.timeout", 20);
-        conf_add_int (app->conf, "connection.retries", -1);
-
-        conf_add_uint (app->conf, "filesystem.dir_cache_max_time", 5);
-        conf_add_boolean (app->conf, "filesystem.cache_enabled", TRUE);
-        conf_add_string (app->conf, "filesystem.cache_dir", "/tmp/hydrafs");
-        conf_add_string (app->conf, "filesystem.cache_dir_max_size", "1Gb");
-
-        conf_add_boolean (app->conf, "statistics.enabled", TRUE);
-        conf_add_int (app->conf, "statistics.port", 8011);
-    } else {
-        if (!conf_parse_file (app->conf, conf_path)) {
-            LOG_err (APP_LOG, "Failed to parse configuration file: %s", conf_path);
-            return -1;
-        }
-    }
-
-    //XXX: fix it
-    app->tmp_dir = g_strdup ("/tmp");
 
     if (!app->evbase) {
         LOG_err (APP_LOG, "Failed to create event base !");
@@ -445,10 +392,9 @@ int main (int argc, char *argv[])
 
     // check if --version is specified
     if (version) {
-            g_fprintf (stdout, " Fast File System v%s\n", VERSION);
-            g_fprintf (stdout, "Copyright (C) 2012 Paul Ionkin <paul.ionkin@gmail.com>\n");
-            g_fprintf (stdout, "Copyright (C) 2012 Skoobe GmbH. All rights reserved.\n");
-            g_fprintf (stdout, "Libraries:\n");
+            g_fprintf (stdout, "HydraFS File System v%s\n", VERSION);
+            g_fprintf (stdout, "Copyright (C) 2012-2013 Paul Ionkin <paul.ionkin@gmail.com>\n");
+            g_fprintf (stdout, "\nLibraries:\n");
             g_fprintf (stdout, " GLib: %d.%d.%d   libevent: %s  fuse: %d.%d  glibc: %s\n", 
                     GLIB_MAJOR_VERSION, GLIB_MINOR_VERSION, GLIB_MICRO_VERSION, 
                     LIBEVENT_VERSION,
@@ -473,8 +419,8 @@ int main (int argc, char *argv[])
         return -1;
     }
 
-    app->uri = evhttp_uri_parse (s_params[0]);
-    if (!app->uri) {
+    app->auth_uri = evhttp_uri_parse (s_params[0]);
+    if (!app->auth_uri) {
         LOG_err (APP_LOG, " URL (%s) is not valid!", s_params[0]);
         g_fprintf (stdout, "%s\n", g_option_context_get_help (context, TRUE, NULL));
         return -1;
@@ -517,92 +463,47 @@ int main (int argc, char *argv[])
         g_strfreev (s_config);
     }
 
-    if (access (conf_path, R_OK) == 0) {
-        LOG_msg (APP_LOG, "Using config file: %s", conf_path);
+    app->conf = conf_create ();
+
+    // parse conf file
+    if (stat (conf_path, &st) == -1) {
+        // set default values
+        LOG_msg (APP_LOG, "Configuration file not found, using default settings.");
         
-        key_file = g_key_file_new ();
-        if (!g_key_file_load_from_file (key_file, conf_path, G_KEY_FILE_NONE, &error)) {
-            LOG_err (APP_LOG, "Failed to load configuration file (%s): %s", conf_path, error->message);
-            return -1;
-        }
+        conf_add_boolean (app->conf, "log.use_syslog", FALSE);
         
-        // [general]
-        app->conf->use_syslog = g_key_file_get_boolean (key_file, "general", "use_syslog", &error);
-        if (error) {
-            LOG_err (APP_LOG, "Failed to read configuration file (%s): %s", conf_path, error->message);
-            return -1;
-        }
+        conf_add_uint (app->conf, "auth.ttl", 85800);
         
-        // [connection]
-        app->conf->writers = g_key_file_get_integer (key_file, "connection", "writes", &error);
-        if (error) {
-            LOG_err (APP_LOG, "Failed to read configuration file (%s): %s", conf_path, error->message);
-            return -1;
-        }
+        conf_add_int (app->conf, "pool.writers", 2);
+        conf_add_int (app->conf, "pool.readers", 2);
+        conf_add_int (app->conf, "pool.operations", 4);
+        conf_add_uint (app->conf, "pool.max_requests_per_pool", 100);
 
-        app->conf->readers = g_key_file_get_integer (key_file, "connection", "readers", &error);
-        if (error) {
-            LOG_err (APP_LOG, "Failed to read configuration file (%s): %s", conf_path, error->message);
-            return -1;
-        }
+        conf_add_int (app->conf, "connection.timeout", 20);
+        conf_add_int (app->conf, "connection.retries", -1);
 
-        app->conf->ops = g_key_file_get_integer (key_file, "connections", "operations", &error);
-        if (error) {
-            LOG_err (APP_LOG, "Failed to read configuration file (%s): %s", conf_path, error->message);
-            return -1;
-        }
+        conf_add_uint (app->conf, "filesystem.dir_cache_max_time", 5);
+        conf_add_boolean (app->conf, "filesystem.cache_enabled", TRUE);
+        conf_add_string (app->conf, "filesystem.cache_dir", "/tmp/hydrafs");
+        conf_add_string (app->conf, "filesystem.cache_dir_max_size", "1Gb");
 
-        app->conf->timeout = g_key_file_get_integer (key_file, "connections", "timeout", &error);
-        if (error) {
-            LOG_err (APP_LOG, "Failed to read configuration file (%s): %s", conf_path, error->message);
-            return -1;
-        }
-
-        app->conf->retries = g_key_file_get_integer (key_file, "connections", "retries", &error);
-        if (error) {
-            LOG_err (APP_LOG, "Failed to read configuration file (%s): %s", conf_path, error->message);
-            return -1;
-        }
-
-        app->conf->http_port = g_key_file_get_integer (key_file, "connections", "http_port", &error);
-        if (error) {
-            LOG_err (APP_LOG, "Failed to read configuration file (%s): %s", conf_path, error->message);
-            return -1;
-        }
-
-        app->conf->max_requests_per_pool = g_key_file_get_integer (key_file, "connections", "max_requests_per_pool", &error);
-        if (error) {
-            LOG_err (APP_LOG, "Failed to read configuration file (%s): %s", conf_path, error->message);
-            return -1;
-        }
-
-        app->conf->dir_cache_max_time = g_key_file_get_integer (key_file, "filesystem", "dir_cache_max_time", &error);
-        if (error) {
-            LOG_err (APP_LOG, "Failed to read configuration file (%s): %s", conf_path, error->message);
-            return -1;
-        }
-        
-        g_free (app->tmp_dir);
-        app->tmp_dir = g_key_file_get_string (key_file, "filesystem", "tmp_dir", &error);
-        if (error) {
-            LOG_err (APP_LOG, "Failed to read configuration file (%s): %s", conf_path, error->message);
-            return -1;
-        }
-
-        g_key_file_free (key_file);
+        conf_add_boolean (app->conf, "statistics.enabled", TRUE);
+        conf_add_int (app->conf, "statistics.port", 8011);
     } else {
-        LOG_msg (APP_LOG, "Configuration file does not exist, using predefined values.");
+        if (!conf_parse_file (app->conf, conf_path)) {
+            LOG_err (APP_LOG, "Failed to parse configuration file: %s", conf_path);
+            return -1;
+        }
     }
-
     g_free (conf_path);
 
     // update logging settings
-    logger_set_syslog (app->conf->use_syslog);
+    logger_set_syslog (conf_get_boolean (app->conf, "log.use_syslog"));
 
 /*}}}*/
 
-
-        application_get_service_on_done, application_get_service_on_error, app))
+    // init subsystems
+    application_finish_initialization_and_run (app);
 
     // start the loop
     event_base_dispatch (app->evbase);
