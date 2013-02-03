@@ -120,7 +120,7 @@ const gchar *application_get_tmp_dir (Application *app)
     return app->tmp_dir;
 }
 
-AppConf *application_get_conf (Application *app)
+ConfData *application_get_conf (Application *app)
 {
     return app->conf;
 }

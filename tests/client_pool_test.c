@@ -442,7 +442,6 @@ int main (int argc, char *argv[])
     in_dir = g_dir_make_tmp (NULL, NULL);
     g_assert (in_dir);
 
-
     app = g_new0 (Application, 1);
     app->pool_count = 7;
     app->files_count = 100;

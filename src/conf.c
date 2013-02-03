@@ -152,7 +152,7 @@ static void text_handler (G_GNUC_UNUSED GMarkupParseContext *context, const gcha
 {
     ConfData *conf = (ConfData *) user_data;
     gint32 tmp32;
-    gint32 tmp_u32;
+    guint32 tmp_u32;
     ConfNode *conf_node;
     gchar *tmp_text;
     gchar *tok, *saved, *tok_striped;
@@ -327,7 +327,7 @@ guint32 conf_get_uint (ConfData *conf, const gchar *path)
     ConfNode *conf_node;
 
     conf_node = g_hash_table_lookup (conf->h_conf, path);
-    if (!conf_node || conf_node->type != CT_INT) {
+    if (!conf_node || conf_node->type != CT_UINT) {
         LOG_err (CONF, "Conf node not found: %s", path);
         return 0;
     } else

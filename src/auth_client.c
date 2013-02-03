@@ -8,6 +8,8 @@
 
 struct _AuthClient {
     Application *app;
+    ConfData *conf;
+
     const struct evhttp_uri *auth_server_uri;
     time_t auth_data_time; // time when Auth data was received
     gchar *auth_token; // cached version of auth_token
@@ -19,10 +21,11 @@ struct _AuthClient {
 
 typedef struct {
     AuthClient_on_data on_data;
-    const gpointer ctx;
+    gpointer ctx;
 } AuthData;
 
 static void auth_client_on_close_cb (struct evhttp_connection *evcon, void *ctx);
+static void auth_client_on_response_cb (struct evhttp_request *req, void *ctx);
 
 AuthClient *auth_client_create (Application *app, const struct evhttp_uri *auth_server_uri)
 {
@@ -30,6 +33,7 @@ AuthClient *auth_client_create (Application *app, const struct evhttp_uri *auth_
 
     auth_client = g_new0 (AuthClient, 1);
     auth_client->app = app;
+    auth_client->conf = application_get_conf (app);
     auth_client->auth_server_uri = auth_server_uri;
     auth_client->auth_data_time = 0;
     auth_client->auth_token = NULL;
@@ -60,7 +64,7 @@ void auth_client_get_data (AuthClient *auth_client, gboolean force, AuthClient_o
     AuthData *adata;
 
     // check if auth data is still valid
-    if (!force && now > auth_client->auth_data_time && now - auth_client->auth_data_time <= auth_client->app->conf->auth_data_max_time) {
+    if (!force && now > auth_client->auth_data_time && now - auth_client->auth_data_time <= conf_get_uint (auth_client->conf, "auth.ttl")) {
         LOG_debug (AUTH_LOG, "Returning auth data from cache");
         on_data (ctx, TRUE, auth_client->auth_token, auth_client->storage_uri);
         return;
@@ -75,7 +79,7 @@ void auth_client_get_data (AuthClient *auth_client, gboolean force, AuthClient_o
     // exit function, if Auth data is being requested
     if (auth_client->is_requesting) {
         LOG_debug (AUTH_LOG, "Auth data is being requested, add cb to the list");
-        return
+        return;
     }
 
     // mark AuthClient as being updating, all further requests should be added to l_get_data list
@@ -126,8 +130,8 @@ void auth_client_get_data (AuthClient *auth_client, gboolean force, AuthClient_o
         return;
     }
 
-    evhttp_connection_set_timeout (evcon, auth_client->app->conf->timeout);
-    evhttp_connection_set_retries (evcon, auth_client->app->conf->retries);
+    evhttp_connection_set_timeout (evcon, conf_get_int (auth_client->conf, "connection.timeout"));
+    evhttp_connection_set_retries (evcon, conf_get_int (auth_client->conf, "connection.retries"));
 
     evhttp_connection_set_closecb (evcon, auth_client_on_close_cb, auth_client);
 
@@ -141,10 +145,14 @@ void auth_client_get_data (AuthClient *auth_client, gboolean force, AuthClient_o
     
     // close connection
     evhttp_add_header (req->output_headers, "Connection", "close");
+    // auth headers
+    evhttp_add_header (req->output_headers, "X-Auth-User", conf_get_string (auth_client->conf, "auth.user"));
+    evhttp_add_header (req->output_headers, "X-Auth-Key", conf_get_string (auth_client->conf, "auth.key"));
 
-    LOG_debug (AUTH_LOG, "Sending request to Auth server");
+    LOG_debug (AUTH_LOG, "Sending request to Auth server: %s:%i %s", 
+        evhttp_uri_get_host (auth_client->auth_server_uri), port, evhttp_uri_get_path (auth_client->auth_server_uri));
     // send request to Auth server
-    res = evhttp_make_request (evcon, req, EVHTTP_REQ_GET, request_str);
+    res = evhttp_make_request (evcon, req, EVHTTP_REQ_GET, evhttp_uri_get_path (auth_client->auth_server_uri));
 
     if (res < 0) {
         LOG_err (AUTH_LOG, "Failed execute HTTP request !");
@@ -153,7 +161,6 @@ void auth_client_get_data (AuthClient *auth_client, gboolean force, AuthClient_o
     }
 }
 
-
 // Connection closed by server, free connection object
 static void auth_client_on_close_cb (struct evhttp_connection *evcon, void *ctx)
 {
@@ -161,11 +168,11 @@ static void auth_client_on_close_cb (struct evhttp_connection *evcon, void *ctx)
 
     LOG_debug (AUTH_LOG, "Connection closed");
 
-    evhttp_connection_free (evcon);
+    //evhttp_connection_free (evcon);
 }
 
 // got response from Auth server
-static void http_connection_on_response_cb (struct evhttp_request *req, void *ctx)
+static void auth_client_on_response_cb (struct evhttp_request *req, void *ctx)
 {
     AuthClient *auth_client = (AuthClient *) ctx;
     struct evbuffer *inbuf;
@@ -187,7 +194,7 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
     // XXX: handle redirect
     // only 200 HTTP code is accepted
     if (evhttp_request_get_response_code (req) != 200 ) {
-        LOG_err (CON_LOG, "Server returned HTTP error: %s (%d)!", req->response_code_line, evhttp_request_get_response_code (req));
+        LOG_err (AUTH_LOG, "Server returned HTTP error: %s (%d)!", req->response_code_line, evhttp_request_get_response_code (req));
         goto done;
     }
 
@@ -220,7 +227,7 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
     auth_client->auth_token = g_strdup (auth_token);
     auth_client->storage_uri = evhttp_uri_parse (storage_url);
 
-    if (!auth_client->auth_token || auth_client->storage_uri) {
+    if (!auth_client->auth_token || !auth_client->storage_uri) {
         LOG_err (AUTH_LOG, "Failed to parse X-Storage-Url: %s", storage_url);
         goto done;
     }
