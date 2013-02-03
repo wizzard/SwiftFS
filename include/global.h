@@ -80,14 +80,13 @@ typedef struct _ConfData ConfData;
 struct event_base *application_get_evbase (Application *app);
 struct evdns_base *application_get_dnsbase (Application *app);
 const gchar *application_get_container_name (Application *app);
-const gchar *application_get_base_path (Application *app);
-const gchar *application_get_tmp_dir (Application *app);
 ConfData *application_get_conf (Application *app);
 
 ClientPool *application_get_read_client_pool (Application *app);
 ClientPool *application_get_write_client_pool (Application *app);
 ClientPool *application_get_ops_client_pool (Application *app);
 DirTree *application_get_dir_tree (Application *app);
+AuthClient *application_get_auth_client (Application *app);
 
 #include "log.h" 
 #include "utils.h" 

@@ -38,7 +38,7 @@ void logger_log_msg (G_GNUC_UNUSED const gchar *file, G_GNUC_UNUSED gint line, G
         g_fprintf (stdout, "%s [%s] (%s %s:%d) %s\n", ts, subsystem, func, file, line, out_str);
     else {
         if (use_syslog)
-            syslog (log_level == LOG_msg ? LOG_INFO : LOG_ERR, out_str);
+            syslog (log_level == LOG_msg ? LOG_INFO : LOG_ERR, "%s", out_str);
         else
             g_fprintf (stdout, "%s\n", out_str);
     }

@@ -294,6 +294,18 @@ gboolean conf_get_boolean (ConfData *conf, const gchar *path)
     }
 }
 
+void conf_add_boolean (ConfData *conf, const gchar *full_path, gboolean val)
+{
+    ConfNode *conf_node;
+
+    conf_node = g_new0 (ConfNode, 1);
+    conf_node->full_name = g_strdup (full_path);
+    conf_node->name = g_strdup (full_path);
+    conf_node->type = CT_BOOLEAN;
+    conf_node->value = GINT_TO_POINTER (val);
+
+    g_hash_table_insert (conf->h_conf, conf_node->full_name, conf_node);
+}
 
 gint32 conf_get_int (ConfData *conf, const gchar *path)
 {
@@ -308,7 +320,7 @@ gint32 conf_get_int (ConfData *conf, const gchar *path)
 
 }
 
-void conf_add_int (ConfData *conf, const gchar *full_path, int val)
+void conf_add_int (ConfData *conf, const gchar *full_path, gint32 val)
 {
     ConfNode *conf_node;
 
@@ -332,6 +344,19 @@ guint32 conf_get_uint (ConfData *conf, const gchar *path)
         return 0;
     } else
         return GPOINTER_TO_UINT (conf_node->value);
+}
+
+void conf_add_uint (ConfData *conf, const gchar *full_path, guint32 val)
+{
+    ConfNode *conf_node;
+
+    conf_node = g_new0 (ConfNode, 1);
+    conf_node->full_name = g_strdup (full_path);
+    conf_node->name = g_strdup (full_path);
+    conf_node->type = CT_UINT;
+    conf_node->value = GUINT_TO_POINTER (val);
+
+    g_hash_table_insert (conf->h_conf, conf_node->full_name, conf_node);
 }
 
 GList *conf_get_list (ConfData *conf, const gchar *path)

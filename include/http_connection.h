@@ -14,13 +14,15 @@ typedef enum {
 
 struct _HttpConnection {
     Application *app;
+    ConfData *conf;
+
+    const AuthClient *auth_client;
 
     ClientPool_on_released_cb client_on_released_cb;
     gpointer pool_ctx;
 
     struct evhttp_connection *evcon;
-    struct evhttp_uri *uri;
-    gchar *storage_url;
+    gchar *auth_token;
 
     // is used by high level
     gboolean is_acquired;
@@ -38,14 +40,7 @@ gboolean http_connection_release (HttpConnection *con);
 struct evhttp_connection *http_connection_get_evcon (HttpConnection *con);
 Application *http_connection_get_app (HttpConnection *con);
 
-gboolean http_connection_connect (HttpConnection *con);
-
 void http_connection_send (HttpConnection *con, struct evbuffer *outbuf);
-
-struct evhttp_request *http_connection_create_request (HttpConnection *con,
-    void (*cb)(struct evhttp_request *, void *), void *arg,
-    const gchar *auth_str);
-
 
 typedef void (*HttpConnection_directory_listing_callback) (gpointer callback_data, gboolean success);
 gboolean http_connection_get_directory_listing (HttpConnection *con, const gchar *path, fuse_ino_t ino,
@@ -58,8 +53,17 @@ gboolean http_connection_file_send (HttpConnection *con, int fd, const gchar *re
 typedef void (*HttpConnection_response_cb) (HttpConnection *con, gpointer ctx, 
         const gchar *buf, size_t buf_len, struct evkeyvalq *headers, gboolean success);
 
-gboolean http_connection_make_request (HttpConnection *con, 
-    const gchar *resource_path, const gchar *request_str,
+// internal
+gboolean http_connection_make_request_ (HttpConnection *con, 
+    const gchar *url,
+    const gchar *http_cmd,
+    struct evbuffer *out_buffer,
+    HttpConnection_response_cb response_cb,
+    gpointer ctx);
+
+// get AuthData and perform HTTP request to StorageURL
+gboolean http_connection_make_request_to_storage_url (HttpConnection *con, 
+    const gchar *resource_path,
     const gchar *http_cmd,
     struct evbuffer *out_buffer,
     HttpConnection_response_cb response_cb,

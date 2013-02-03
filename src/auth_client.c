@@ -13,7 +13,7 @@ struct _AuthClient {
     const struct evhttp_uri *auth_server_uri;
     time_t auth_data_time; // time when Auth data was received
     gchar *auth_token; // cached version of auth_token
-    struct evhttp_uri *storage_uri; // cached version of sorage_uri
+    gchar *storage_uri; // cached version of sorage_uri
 
     gboolean is_requesting; // TRUE if new Auth data is being requested
     GList *l_get_data; // List of requests to auth_client_get_data
@@ -49,7 +49,7 @@ void auth_client_destroy (AuthClient *auth_client)
     if (auth_client->auth_token)
         g_free (auth_client->auth_token);
     if (auth_client->storage_uri)
-        evhttp_uri_free (auth_client->storage_uri);
+        g_free (auth_client->storage_uri);
     g_free (auth_client);
 }
 
@@ -210,7 +210,7 @@ static void auth_client_on_response_cb (struct evhttp_request *req, void *ctx)
 
     // make sure we got all headers' values
     if (!storage_url || !auth_token) {
-        LOG_err (AUTH_LOG, "Failed to get X-Storage-Url and X-Auth-Token haeders !");
+        LOG_err (AUTH_LOG, "Failed to get X-Storage-Url and X-Auth-Token headers !");
         goto done;
     }
 
@@ -220,12 +220,12 @@ static void auth_client_on_response_cb (struct evhttp_request *req, void *ctx)
         auth_client->auth_token = NULL;
     }
     if (auth_client->storage_uri) {
-        evhttp_uri_free (auth_client->storage_uri);
+        g_free (auth_client->storage_uri);
         auth_client->storage_uri = NULL;
     }
 
     auth_client->auth_token = g_strdup (auth_token);
-    auth_client->storage_uri = evhttp_uri_parse (storage_url);
+    auth_client->storage_uri = g_strdup (storage_url);
 
     if (!auth_client->auth_token || !auth_client->storage_uri) {
         LOG_err (AUTH_LOG, "Failed to parse X-Storage-Url: %s", storage_url);

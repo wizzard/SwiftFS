@@ -3,6 +3,7 @@
  * file 'LICENSE.txt', which is part of this source code package.
  */
 #include "http_client.h"
+#include "auth_client.h"
 
 /*{{{ declaration */
 
@@ -22,6 +23,8 @@ typedef enum {
 // HTTP structure
 struct _HttpClient {
     Application *app;
+    ConfData *conf;
+
     struct event_base *evbase;
     struct evdns_base *dns_base;
     
@@ -103,8 +106,10 @@ gpointer http_client_create (Application *app)
 
     http = g_new0 (HttpClient, 1);
     http->app = app;
+    http->conf = application_get_conf (app);
     http->evbase = application_get_evbase (app);
     http->dns_base = application_get_dnsbase (app);
+
     http->is_acquired = FALSE;
   
     // default state
@@ -432,12 +437,9 @@ static void http_client_connection_event_cb (struct bufferevent *bev, short what
 static void http_client_connect (HttpClient *http)
 {
     int port;
-    AppConf *conf;
     
     if (http->connection_state == C_connecting)
         return;
-
-    conf = application_get_conf (http->app);
 
     if (http->bev)
         bufferevent_free (http->bev);
@@ -449,15 +451,7 @@ static void http_client_connect (HttpClient *http)
     // XXX: 
     // bufferevent_set_timeouts (http->bev, 
 
-
-    port = evhttp_uri_get_port (http->http_uri);
-    // if no port is specified, libevent returns -1
-    if (port == -1) {
-        if (conf)
-            port = conf->http_port;
-        else
-            port = 8011;
-    }
+    port = uri_get_port (http->http_uri);
     
     LOG_debug (HTTP_LOG, "Connecting to %s:%d .. %p",
         evhttp_uri_get_host (http->http_uri),
@@ -635,7 +629,8 @@ static gboolean http_client_send_initial_request (HttpClient *http)
 }
 
 // connect (if necessary) to the server and send an HTTP request
-gboolean http_client_start_request (HttpClient *http, HttpClientRequestMethod method, const gchar *url)
+// internal
+gboolean http_client_start_request_ (HttpClient *http, HttpClientRequestMethod method, const gchar *url)
 {
     http->method = method;
     
@@ -658,6 +653,49 @@ gboolean http_client_start_request (HttpClient *http, HttpClientRequestMethod me
 
     return TRUE;
 }
+
+typedef struct {
+    HttpClient *http;
+    HttpClientRequestMethod method;
+    gchar *path;
+} ARequest;
+
+// on AuthServer reply
+static void http_client_on_auth_data_cb (gpointer ctx, gboolean success, 
+    const gchar *auth_token, const gchar *storage_uri)
+{
+    ARequest *req = (ARequest *) ctx;
+    gchar *url;
+
+    if (!success) {
+        LOG_err (HTTP_LOG, "Failed to get AuthToken !");
+        goto done;
+    }
+
+    url = g_strdup_printf ("%s%s", storage_uri, req->path);
+
+    http_client_start_request_ (req->http, req->method, url);
+    g_free (url);
+
+done:
+    g_free (req->path);
+    g_free (req);
+}
+
+// get AuthData and perform HTTP request to StorageURL
+gboolean http_client_start_request_to_storage_url (HttpClient *http, HttpClientRequestMethod method, const gchar *path)
+{
+    ARequest *req;
+
+    req = g_new0 (ARequest, 1);
+    req->http = http;
+    req->method = method;
+    req->path = g_strdup (path);
+
+    auth_client_get_data (application_get_auth_client (http->app), FALSE, http_client_on_auth_data_cb, req);
+    return TRUE;
+}
+
 /*}}}*/
 
 // return TRUE if http client is ready to execute a new request

@@ -6,6 +6,7 @@
 #include "http_client.h"
 #include "http_connection.h"
 #include "client_pool.h"
+#include "auth_client.h"
 
 // 1. Create 100 files, fill with random data, get MD5 sum
 // 2. Start HTTP server
@@ -17,7 +18,6 @@
 typedef struct {
     gchar *in_name;
     gchar *md5;
-    gchar *url;
     gint id;
     
     gchar *out_name;
@@ -34,10 +34,11 @@ typedef struct {
 struct _Application {
     struct event_base *evbase;
     struct evdns_base *dns_base;
-    AppConf *conf;
+    ConfData *conf;
     struct evhttp *http;
 
-    struct evhttp_uri *storage_url;
+    AuthClient *auth_client;
+
     gboolean is_http_client;
     gint pool_count;
     gint files_count;
@@ -74,7 +75,7 @@ static GList *populate_file_list (gint max_files, GList *l_files, gchar *in_dir)
         fdata->id = i;
         bytes_len = g_random_int_range (100000, 1000000);
         bytes = g_malloc (bytes_len + 1);
-        RAND_pseudo_bytes (bytes, bytes_len);
+        RAND_pseudo_bytes ((unsigned char *)bytes, bytes_len);
         *(bytes + bytes_len) = '\0';
         
         name = get_random_string (15, TRUE);
@@ -89,9 +90,6 @@ static GList *populate_file_list (gint max_files, GList *l_files, gchar *in_dir)
         fdata->fout = fopen (fdata->out_name, "w");
         g_assert (fdata->fout);
 
-        fdata->url = g_strdup_printf ("http://127.0.0.1:8011/%s", name);
-        g_assert (fdata->url);
-        
         LOG_debug (POOL_TEST, "%s -> %s, size: %u", fdata->in_name, fdata->md5, bytes_len);
 
         g_free (bytes);
@@ -145,7 +143,7 @@ static void on_last_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpoi
     evb = evbuffer_new();
     evbuffer_add_file(evb, fd, 0, st.st_size);
 
-    md5 = get_md5_sum (evbuffer_pullup (evb, -1), evbuffer_get_length (evb));
+    md5 = get_md5_sum ((const char *)evbuffer_pullup (evb, -1), evbuffer_get_length (evb));
 
     LOG_debug (POOL_TEST, "%s == %s", fdata->md5, md5);
     g_assert_cmpstr (fdata->md5, ==, md5);
@@ -178,7 +176,7 @@ static void on_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpointer 
 
     evbuffer_drain (input_buf, buf_len);
     
-    LOG_debug (POOL_TEST, "chunk ID:%d len: %zu", fdata->id, buf_len);
+    //LOG_debug (POOL_TEST, "chunk ID:%d len: %zu", fdata->id, buf_len);
 }
 
 static void on_get_http_client (gpointer client, gpointer pool_ctx)
@@ -207,11 +205,8 @@ static void on_get_http_client (gpointer client, gpointer pool_ctx)
     http_client_set_on_last_chunk_cb (http, on_last_chunk_cb);
 
     http_client_set_output_length (http, 0);
-    http_client_add_output_header (http, "Authorization", "test1");
-    http_client_add_output_header (http, "Date", "test 2");
-    http_client_add_output_header (http, "Range", "123123");
 
-    http_client_start_request (http, Method_get, fdata->url);
+    http_client_start_request_to_storage_url (http, Method_get, fdata->in_name);
 }
 
 static void on_connection_data (HttpConnection *con, void *ctx, 
@@ -239,7 +234,7 @@ static void on_connection_data (HttpConnection *con, void *ctx,
     evb = evbuffer_new();
     evbuffer_add_file(evb, fd, 0, st.st_size);
 
-    md5 = get_md5_sum (evbuffer_pullup (evb, -1), evbuffer_get_length (evb));
+    md5 = get_md5_sum ((const char *)evbuffer_pullup (evb, -1), evbuffer_get_length (evb));
 
     LOG_debug (POOL_TEST, "%s == %s", fdata->md5, md5);
     g_assert_cmpstr (fdata->md5, ==, md5);
@@ -266,7 +261,6 @@ static void on_get_http_connection (gpointer client, gpointer pool_ctx)
     gpointer p;
     gint i;
     gboolean res;
-    struct evhttp_uri *uri;
 
     LOG_debug (POOL_TEST, "Got http connection %p, sending request for: %s", con, fdata->in_name);
 
@@ -280,15 +274,11 @@ static void on_get_http_connection (gpointer client, gpointer pool_ctx)
 
     http_connection_acquire (con);
 
-    uri = evhttp_uri_parse_with_flags (fdata->url, 0);
-
-    res = http_connection_make_request (con, 
-        "", evhttp_uri_get_path (uri), "GET", NULL,
+    res = http_connection_make_request_to_storage_url (con, 
+        fdata->in_name, "GET", NULL,
         on_connection_data,
         fdata
     );
-
-    evhttp_uri_free (uri);
 
     g_assert (res);
 }
@@ -314,7 +304,7 @@ static void on_output_timer (evutil_socket_t fd, short event, void *ctx)
 /*{{{ http server */
 #define BUFFER_SIZE 1024 * 10
 
-static void on_srv_request (struct evhttp_request *req, void *ctx)
+static void on_srv_storage_request (struct evhttp_request *req, void *ctx)
 {
     struct evbuffer *in;
     gchar *dir = (gchar *) ctx;
@@ -335,17 +325,18 @@ static void on_srv_request (struct evhttp_request *req, void *ctx)
 	tmp = evhttp_uri_get_path(decoded);
     g_assert (tmp);
     decoded_path = evhttp_uridecode(tmp, 0, NULL);
+    path = decoded_path + strlen ("/storage");
 
     evb = evbuffer_new();
 
-    path = g_strdup_printf ("%s/%s", dir, decoded_path);
+    //path = g_strdup_printf ("%s/%s", dir, decoded_path);
     LOG_debug (POOL_TEST, "SRV: received %d bytes. Req: %s, path: %s", evbuffer_get_length (in), evhttp_request_get_uri (req), path);
 
     g_free (decoded_path);
     evhttp_uri_free (decoded);
     f = fopen (path, "r");
     g_assert (f);
-    g_free (path);
+    //g_free (path);
 
     while ((bytes_read = fread (buf, 1, BUFFER_SIZE, f)) > 0) {
         evbuffer_add (evb, buf, bytes_read);
@@ -361,15 +352,37 @@ static void on_srv_request (struct evhttp_request *req, void *ctx)
     evbuffer_free(evb);
 }
 
+static void on_srv_auth_request (struct evhttp_request *req, void *ctx)
+{
+    evhttp_add_header (req->output_headers, "X-Auth-Token", "abcdef");
+    evhttp_add_header (req->output_headers, "X-Storage-Url", "http://127.0.0.1:8011/storage");
+    evhttp_send_reply(req, 200, "OK", NULL);
+}
+
+static void on_srv_gen_request (struct evhttp_request *req, void *ctx)
+{
+	const char *uri = evhttp_request_get_uri(req);
+    
+    if (!strstr (uri, "/storage/")) {
+        LOG_debug (POOL_TEST, "%s", uri);
+        g_assert_not_reached ();
+    }
+
+    on_srv_storage_request (req, ctx);
+}
+
 static void start_srv (struct event_base *base, gchar *in_dir)
 {
     app->http = evhttp_new (base);
     g_assert (app->http);
     evhttp_bind_socket (app->http, "127.0.0.1", 8011);
-    evhttp_set_gencb (app->http, on_srv_request, in_dir);
+    evhttp_set_cb (app->http, "/storage/", on_srv_storage_request, in_dir);
+    evhttp_set_cb (app->http, "/get_auth", on_srv_auth_request, NULL);
+    evhttp_set_gencb (app->http, on_srv_gen_request, in_dir);
 
     LOG_debug (POOL_TEST, "SRV: started");
 }
+
 /*}}}*/
 /*{{{ utils */
 struct event_base *application_get_evbase (Application *app)
@@ -382,40 +395,19 @@ struct evdns_base *application_get_dnsbase (Application *app)
     return app->dns_base;
 }
 
-
-const gchar *application_get_host (Application *app)
-{
-    return "127.0.0.1";
-}
-
-int application_get_port (Application *app)
-{
-    return 8011;
-}
-
 const gchar *application_get_container_name (Application *app)
 {
     return "test";
 }
 
-const gchar *application_get_base_path (Application *app)
-{
-    return "/";
-}
-
-struct evhttp_uri *application_get_storage_uri (Application *app)
-{
-    return app->storage_url;
-}
-
-AppConf *application_get_conf (Application *app)
+ConfData *application_get_conf (Application *app)
 {
     return app->conf;
 }
 
-const gchar *application_get_auth_token (Application *app)
+AuthClient *application_get_auth_client (Application *app)
 {
-    return "";
+    return app->auth_client;
 }
 
 static gboolean print_foreach (gconstpointer a, gconstpointer b)
@@ -434,6 +426,7 @@ int main (int argc, char *argv[])
     CBData *cb;
     gchar *in_dir;
     GList *tmp;
+    struct evhttp_uri *uri;
 
     log_level = LOG_debug;
 
@@ -444,11 +437,36 @@ int main (int argc, char *argv[])
 
     app = g_new0 (Application, 1);
     app->pool_count = 7;
-    app->files_count = 100;
-    app->storage_url = evhttp_uri_parse_with_flags ("http://127.0.0.1:8011/", 0);
+    app->files_count = 10;
     app->h_clients_freq = g_hash_table_new (g_direct_hash, g_direct_equal);
     app->evbase = event_base_new ();
 	app->dns_base = evdns_base_new (app->evbase, 1);
+
+        app->conf = conf_create ();
+        conf_add_boolean (app->conf, "log.use_syslog", TRUE);
+        
+        conf_add_uint (app->conf, "auth.ttl", 85800);
+        
+        conf_add_int (app->conf, "pool.writers", 2);
+        conf_add_int (app->conf, "pool.readers", 2);
+        conf_add_int (app->conf, "pool.operations", 4);
+        conf_add_uint (app->conf, "pool.max_requests_per_pool", 100);
+
+        conf_add_int (app->conf, "connection.timeout", 20);
+        conf_add_int (app->conf, "connection.retries", -1);
+
+        conf_add_uint (app->conf, "filesystem.dir_cache_max_time", 5);
+        conf_add_boolean (app->conf, "filesystem.cache_enabled", TRUE);
+        conf_add_string (app->conf, "filesystem.cache_dir", "/tmp/hydrafs");
+        conf_add_string (app->conf, "filesystem.cache_dir_max_size", "1Gb");
+
+        conf_add_boolean (app->conf, "statistics.enabled", TRUE);
+        conf_add_int (app->conf, "statistics.port", 8011);
+
+    conf_add_string (app->conf, "auth.user", "test");
+    conf_add_string (app->conf, "auth.key", "test");
+    uri = evhttp_uri_parse ("http://127.0.0.1:8011/get_auth");
+    app->auth_client = auth_client_create (app, uri);
 
     l_files = populate_file_list (app->files_count, l_files, in_dir);
     g_assert (l_files);
@@ -502,7 +520,6 @@ int main (int argc, char *argv[])
         
         g_free (fdata->in_name);
         g_free (fdata->md5);
-        g_free (fdata->url);
         g_free (fdata->out_name);
         g_free (fdata);
     };
@@ -510,16 +527,17 @@ int main (int argc, char *argv[])
 
     g_free (cb);
 
+    evhttp_uri_free (uri);
     client_pool_destroy (pool);
     event_del (timeout);
     event_free (timeout);
 
     evhttp_free (app->http);
+    auth_client_destroy (app->auth_client);
 
     evdns_base_free (app->dns_base, 0);
     g_hash_table_destroy (app->h_clients_freq);
     event_base_free (app->evbase);
-    evhttp_uri_free (app->storage_url);
     g_free (app);
 
     return 0;

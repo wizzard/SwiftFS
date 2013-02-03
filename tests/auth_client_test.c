@@ -54,13 +54,17 @@ gboolean check_list (GList *l)
 }
 
 static void on_auth_data_cb (gpointer ctx, gboolean success, 
-    const gchar *auth_token, const struct evhttp_uri *storage_uri)
+    const gchar *auth_token, const gchar *storage_uri)
 {
     ARequest *req = (ARequest *) ctx;
 
     g_assert (success);
 
     req->checked = TRUE;
+    g_assert (auth_token);
+    g_assert (strlen (auth_token) > 10);
+
+    g_assert_cmpstr (storage_uri, ==, "");
 
     if (check_list (app->l_requests)) {
         event_base_loopbreak (app->evbase);

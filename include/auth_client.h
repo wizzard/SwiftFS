@@ -13,7 +13,7 @@ void auth_client_destroy (AuthClient *auth_client);
 // return auth_token and storage_uri, owned by AuthClient
 // success TRUE if Ok
 typedef void (*AuthClient_on_data) (gpointer ctx, gboolean success, 
-    const gchar *auth_token, const struct evhttp_uri *storage_uri);
+    const gchar *auth_token, const gchar *storage_uri);
 
 // returns requested data at once if cache is not expired
 // or performs HTTP request to the server

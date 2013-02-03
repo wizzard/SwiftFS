@@ -37,10 +37,10 @@ struct _DirTree {
     DirEntry *root;
     GHashTable *h_inodes; // inode -> DirEntry
     Application *app;
+    ConfData *conf;
 
     fuse_ino_t max_ino;
     guint64 current_age;
-    time_t dir_cache_max_time; // max time of dir cache in seconds
 
     gint64 current_write_ops; // the number of current write operations
 };
@@ -57,16 +57,14 @@ static void dir_entry_destroy (gpointer data);
 DirTree *dir_tree_create (Application *app)
 {
     DirTree *dtree;
-    AppConf *conf;
 
-    conf = application_get_conf (app);
     dtree = g_new0 (DirTree, 1);
     dtree->app = app;
+    dtree->conf = application_get_conf (app);
     // children entries are destroyed by parent directory entries
     dtree->h_inodes = g_hash_table_new (g_direct_hash, g_direct_equal);
     dtree->max_ino = FUSE_ROOT_ID;
     dtree->current_age = 0;
-    dtree->dir_cache_max_time = conf->dir_cache_max_time; //XXX
     dtree->current_write_ops = 0;
 
     dtree->root = dir_tree_add_entry (dtree, "/", DIR_DEFAULT_MODE, DET_dir, 0, 0, time (NULL));
@@ -370,7 +368,7 @@ void dir_tree_fill_dir_buf (DirTree *dtree,
     t = time (NULL);
 
     // already have directory buffer in the cache
-    if (en->dir_cache_size && t >= en->dir_cache_created && t - en->dir_cache_created <= dtree->dir_cache_max_time) {
+    if (en->dir_cache_size && t >= en->dir_cache_created && t - en->dir_cache_created <= conf_get_uint (dtree->conf, "filesystem.dir_cache_max_time")) {
         LOG_debug (DIR_TREE_LOG, "Sending directory buffer (ino = %"INO_FMT") from cache !", ino);
         readdir_cb (req, TRUE, size, off, en->dir_cache, en->dir_cache_size);
         return;
@@ -792,13 +790,6 @@ static void dir_tree_file_read_on_chunk_cb (HttpClient *http, struct evbuffer *i
 // prepare HTTP request
 static void dir_tree_file_read_prepare_request (DirTreeFileOpData *op_data, HttpClient *http, off_t off, size_t size)
 {
-    gchar *auth_str;
-    char time_str[100];
-    time_t t = time (NULL);
-    gchar auth_key[300];
-    gchar *url;
-    gchar range[300];
-    AppConf *conf;
 
     http_client_request_reset (http);
 
@@ -807,27 +798,7 @@ static void dir_tree_file_read_prepare_request (DirTreeFileOpData *op_data, Http
     http_client_set_on_last_chunk_cb (http, dir_tree_file_read_on_last_chunk_cb);
     http_client_set_output_length (http, 0);
     
-    strftime (time_str, sizeof (time_str), "%a, %d %b %Y %H:%M:%S GMT", gmtime(&t));
-
-    snprintf (range, sizeof (range), "bytes=%"OFF_FMT"-%"OFF_FMT, off, off+size - 1);
-    LOG_debug (DIR_TREE_LOG, "range: %s", range);
-
-    http_client_add_output_header (http, "Authorization", auth_key);
-    http_client_add_output_header (http, "Date", time_str);
-    http_client_add_output_header (http, "Range", range);
-
-    // XXX: HTTPS
-    conf = application_get_conf (op_data->dtree->app);
-    url = g_strdup_printf ("http://%s%d%s", 
-        application_get_host (op_data->dtree->app),
-        application_get_port (op_data->dtree->app),
-        op_data->en->fullpath
-    );
-    
-    http_client_start_request (http, Method_get, url);
-
-    g_free (auth_str);
-    g_free (url);
+    http_client_start_request_to_storage_url (http, Method_get, op_data->en->fullpath);
 }
 
 // add new chunk range to the chunks pending queue
@@ -962,7 +933,7 @@ typedef struct {
 
 // file is removed
 static void dir_tree_file_remove_on_http_client_data_cb (HttpConnection *http_con, gpointer ctx, 
-        const gchar *buf, size_t buf_len, G_GNUC_UNUSED struct evkeyvalq *headers)
+        const gchar *buf, size_t buf_len, G_GNUC_UNUSED struct evkeyvalq *headers, gboolean success)
 {
     FileRemoveData *data = (FileRemoveData *) ctx;
     
@@ -999,11 +970,10 @@ static void dir_tree_file_remove_on_http_client_cb (gpointer client, gpointer ct
 
     req_path = g_strdup_printf ("%s", data->en->fullpath);
 
-    res = http_connection_make_request (http_con, 
-        req_path, req_path, "DELETE", 
+    res = http_connection_make_request_to_storage_url (http_con, 
+        req_path, "DELETE", 
         NULL,
         dir_tree_file_remove_on_http_client_data_cb,
-        dir_tree_file_remove_on_http_client_error_cb,
         data
     );
 

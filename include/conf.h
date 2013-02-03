@@ -16,10 +16,13 @@ const gchar *conf_get_string (ConfData *conf, const gchar *path);
 void conf_add_string (ConfData *conf, const gchar *full_path, const gchar *val);
 
 gint32 conf_get_int (ConfData *conf, const gchar *path);
-void conf_add_int (ConfData *conf, const gchar *full_path, int val);
+void conf_add_int (ConfData *conf, const gchar *full_path, gint32 val);
 
 guint32 conf_get_uint (ConfData *conf, const gchar *path);
+void conf_add_uint (ConfData *conf, const gchar *full_path, guint32 val);
+
 gboolean conf_get_boolean (ConfData *conf, const gchar *path);
+void conf_add_boolean (ConfData *conf, const gchar *full_path, gboolean val);
 
 GList *conf_get_list (ConfData *conf, const gchar *path);
 void conf_list_add_string (ConfData *conf, const gchar *full_path, const gchar *val);

@@ -200,7 +200,7 @@ static void http_connection_on_directory_listing_data (HttpConnection *con, void
             application_get_base_path (dir_req->app), dir_req->dir_path, dir_req->max_keys, next_marker);
     
     res = http_connection_make_request (dir_req->con, 
-        dir_req->resource_path, req_path, "GET", NULL,
+        req_path, "GET", NULL,
         http_connection_on_directory_listing_data,
         dir_req
     );
@@ -254,7 +254,7 @@ gboolean http_connection_get_directory_listing (HttpConnection *con, const gchar
             application_get_base_path (dir_req->app), dir_req->dir_path, dir_req->max_keys);
 
     res = http_connection_make_request (con, 
-        dir_req->resource_path, req_path, "GET", NULL,
+        req_path, "GET", NULL,
         http_connection_on_directory_listing_data,
         dir_req
     );

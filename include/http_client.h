@@ -35,8 +35,13 @@ void http_client_set_on_released_cb (gpointer client, ClientPool_on_released_cb 
 
 // return TRUE if http client is ready to execute a new request
 gboolean http_client_is_ready (HttpClient *http);
+
 // try to connect to the server
-gboolean http_client_start_request (HttpClient *http, HttpClientRequestMethod method, const gchar *url);
+// internal
+gboolean http_client_start_request_ (HttpClient *http, HttpClientRequestMethod method, const gchar *url);
+
+// get AuthData first and call http_client_start_request ()
+gboolean http_client_start_request_to_storage_url (HttpClient *http, HttpClientRequestMethod method, const gchar *path);
 
 // set context data for all callback functions
 void http_client_set_cb_ctx (HttpClient *http, gpointer ctx);

@@ -3,6 +3,7 @@
  * file 'LICENSE.txt', which is part of this source code package.
  */
 #include "http_connection.h"
+#include "auth_client.h"
 
 /*{{{ struct*/
 
@@ -18,8 +19,6 @@ static void http_connection_on_close (struct evhttp_connection *evcon, void *ctx
 gpointer http_connection_create (Application *app)
 {
     HttpConnection *con;
-    int port;
-    struct bufferevent *bev;
 
     con = g_new0 (HttpConnection, 1);
     if (!con) {
@@ -28,57 +27,12 @@ gpointer http_connection_create (Application *app)
     }
 
     con->app = app;
-    con->storage_url = g_strdup (application_get_host (app));
-    con->uri = application_get_storage_uri (app);
+    con->conf = application_get_conf (app);
+    con->auth_client = application_get_auth_client (app);
+    con->evcon = NULL;
+    con->auth_token = NULL;
 
     con->is_acquired = FALSE;
-
-    port = uri_get_port (con->uri);
-
-    LOG_debug (CON_LOG, "Connecting to %s:%d", 
-        evhttp_uri_get_host (con->uri),
-        port
-    );
-
-    // create SSL buffer
-    if (uri_is_https (con->uri)) {
-        SSL_CTX *ssl_ctx;
-        SSL *ssl;
-
-		ssl_ctx = SSL_CTX_new (SSLv23_method());
-		ssl = SSL_new (ssl_ctx);
-
-		bev = bufferevent_openssl_socket_new (
-            application_get_evbase (app), 
-            -1,
-            ssl,
-		    BUFFEREVENT_SSL_CONNECTING,
-		    BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS
-        );
-    } else {
-		bev = bufferevent_socket_new (
-            application_get_evbase (app),
-            -1,
-		    BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS);
-    }
-
-    con->evcon = evhttp_connection_base_bufferevent_new (
-        application_get_evbase (app),
-        application_get_dnsbase (app),
-        bev,
-        evhttp_uri_get_host (con->uri),
-        port
-    );
-
-    if (!con->evcon) {
-        LOG_err (CON_LOG, "Failed to create evhttp_connection !");
-        return NULL;
-    }
-    
-    evhttp_connection_set_timeout (con->evcon, app->conf->timeout);
-    evhttp_connection_set_retries (con->evcon, app->conf->retries);
-
-    evhttp_connection_set_closecb (con->evcon, http_connection_on_close, con);
 
     return (gpointer)con;
 }
@@ -88,12 +42,82 @@ void http_connection_destroy (gpointer data)
 {
     HttpConnection *con = (HttpConnection *) data;
 
-    g_free (con->storage_url);
+    if (con->auth_token)
+        g_free (con->auth_token);
+
     if (con->evcon)    
         evhttp_connection_free (con->evcon);
     g_free (con);
 }
 /*}}}*/
+
+static gboolean http_connection_connect (HttpConnection *con, const gchar *storage_url)
+{
+    gint port;
+    struct bufferevent *bev;
+    struct evhttp_uri *uri;
+
+    uri = evhttp_uri_parse (storage_url);
+    if (!uri) {
+        LOG_err (CON_LOG, "Failed to parse StorageUrl: %s", storage_url);
+        return FALSE;
+    }
+    port = uri_get_port (uri);
+
+    LOG_debug (CON_LOG, "Connecting to %s:%d", 
+        evhttp_uri_get_host (uri),
+        port
+    );
+
+    // create SSL buffer
+    if (uri_is_https (uri)) {
+        SSL_CTX *ssl_ctx;
+        SSL *ssl;
+
+		ssl_ctx = SSL_CTX_new (SSLv23_method());
+		ssl = SSL_new (ssl_ctx);
+
+		bev = bufferevent_openssl_socket_new (
+            application_get_evbase (con->app), 
+            -1,
+            ssl,
+		    BUFFEREVENT_SSL_CONNECTING,
+		    BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS
+        );
+    } else {
+		bev = bufferevent_socket_new (
+            application_get_evbase (con->app),
+            -1,
+		    BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS);
+    }
+
+    if (!bev) {
+        LOG_err (CON_LOG, "Failed to create bufferevent !");
+        return FALSE;
+    }
+
+    con->evcon = evhttp_connection_base_bufferevent_new (
+        application_get_evbase (con->app),
+        application_get_dnsbase (con->app),
+        bev,
+        evhttp_uri_get_host (uri),
+        port
+    );
+
+    if (!con->evcon) {
+        LOG_err (CON_LOG, "Failed to create evhttp_connection !");
+        return FALSE;
+    }
+    
+    evhttp_connection_set_timeout (con->evcon, conf_get_int (con->conf, "connection.timeout"));
+    evhttp_connection_set_retries (con->evcon, conf_get_int (con->conf, "connection.retries"));
+
+    evhttp_connection_set_closecb (con->evcon, http_connection_on_close, con);
+
+    evhttp_uri_free (uri);
+
+    return TRUE;
+}
 
 void http_connection_set_on_released_cb (gpointer client, ClientPool_on_released_cb client_on_released_cb, gpointer ctx)
 {
@@ -148,37 +172,6 @@ struct evhttp_connection *http_connection_get_evcon (HttpConnection *con)
 
 /*}}}*/
 
-// create  and setup HTTP connection request
-struct evhttp_request *http_connection_create_request (HttpConnection *con,
-    void (*cb)(struct evhttp_request *, void *), void *arg,
-    const gchar *auth_str)
-{    
-    struct evhttp_request *req;
-    gchar auth_key[300];
-    struct tm *cur_p;
-	time_t t = time(NULL);
-    struct tm cur;
-    char date[50];
-    //char hostname[1024];
-
-	gmtime_r(&t, &cur);
-	cur_p = &cur;
-
-    req = evhttp_request_new (cb, arg);
-    evhttp_add_header (req->output_headers, "X-Auth-Token", application_get_auth_token (con->app));
-    evhttp_add_header (req->output_headers, "Host", application_get_host (con->app));
-	evhttp_add_header (req->output_headers, "Accept", "*/*");
-
-    LOG_debug (CON_LOG, "HOST: %s", application_get_host (con->app));
-	/*	
-    if (strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", cur_p) != 0) {
-			evhttp_add_header (req->output_headers, "Date", date);
-		}
-    */
-    return req;
-}
-
-
 typedef struct {
     HttpConnection *con;
     HttpConnection_response_cb response_cb;
@@ -225,8 +218,9 @@ done:
     g_free (data);
 }
 
-gboolean http_connection_make_request (HttpConnection *con, 
-    const gchar *resource_path, const gchar *request_str,
+// internal
+gboolean http_connection_make_request_ (HttpConnection *con, 
+    const gchar *url,
     const gchar *http_cmd,
     struct evbuffer *out_buffer,
     HttpConnection_response_cb response_cb,
@@ -238,6 +232,21 @@ gboolean http_connection_make_request (HttpConnection *con,
     RequestData *data;
     int res;
     enum evhttp_cmd_type cmd_type;
+    struct evhttp_uri *uri;
+
+    // connect
+    if (!con->evcon) {
+        if (!http_connection_connect (con, url)) {
+            LOG_err (CON_LOG, "Failed to connect to Storage server !");
+            return FALSE;
+        }
+    }
+
+    uri = evhttp_uri_parse (url);
+    if (!uri) {
+        LOG_err (CON_LOG, "Failed to parse StorageUrl: %s", url);
+        return FALSE;
+    }
     
     data = g_new0 (RequestData, 1);
     data->response_cb = response_cb;
@@ -264,21 +273,83 @@ gboolean http_connection_make_request (HttpConnection *con,
         return FALSE;
     }
 
-    evhttp_add_header (req->output_headers, "X-Auth-Token", application_get_auth_token (con->app));
-    evhttp_add_header (req->output_headers, "Host", application_get_host (con->app));	
+    evhttp_add_header (req->output_headers, "X-Auth-Token", con->auth_token);
+    evhttp_add_header (req->output_headers, "Host", evhttp_uri_get_host (uri));	
 	//evhttp_add_header (req->output_headers, "Date", time_str);
 
     if (out_buffer) {
         evbuffer_add_buffer (req->output_buffer, out_buffer);
     }
 
-    LOG_debug (CON_LOG, "HOST: %s", application_get_host (con->app));
-    LOG_msg (CON_LOG, "[%p] New request: %s", con, request_str);
+    LOG_msg (CON_LOG, "[%p] New request: %s", con, url);
 
-    res = evhttp_make_request (http_connection_get_evcon (con), req, cmd_type, request_str);
+    res = evhttp_make_request (http_connection_get_evcon (con), req, cmd_type, evhttp_uri_get_path (uri));
+    
+    evhttp_uri_free (uri);
 
-    if (res < 0)
+    if (res < 0) {
+        LOG_err (CON_LOG, "Failed to create request !");
         return FALSE;
-    else
+    } else
         return TRUE;
+}
+
+typedef struct {
+    HttpConnection *con; 
+    gchar *resource_path;
+    gchar *http_cmd;
+    struct evbuffer *out_buffer;
+    HttpConnection_response_cb response_cb;
+    gpointer ctx;
+} ARequest;
+
+// on AuthServer reply
+static void http_connection_on_auth_data_cb (gpointer ctx, gboolean success, 
+    const gchar *auth_token, const gchar *storage_uri)
+{
+    ARequest *req = (ARequest *) ctx;
+    gchar *url;
+
+    if (!success) {
+        LOG_err (CON_LOG, "Failed to get AuthToken !");
+        goto done;
+    }
+
+    url = g_strdup_printf ("%s%s", storage_uri, req->resource_path);
+    if (req->con->auth_token)
+        g_free (req->con->auth_token);
+    req->con->auth_token = g_strdup (auth_token);
+
+    http_connection_make_request_ (req->con, url, req->http_cmd, req->out_buffer, req->response_cb, req->ctx);
+
+    g_free (url);
+
+done:
+    g_free (req->resource_path);
+    g_free (req->http_cmd);
+    g_free (req);
+}
+
+
+// get AuthData and perform HTTP request to StorageURL
+gboolean http_connection_make_request_to_storage_url (HttpConnection *con, 
+    const gchar *resource_path,
+    const gchar *http_cmd,
+    struct evbuffer *out_buffer,
+    HttpConnection_response_cb response_cb,
+    gpointer ctx)
+{
+    ARequest *req;
+
+    req = g_new0 (ARequest, 1);
+    req->con = con;
+    req->resource_path = g_strdup (resource_path);
+    req->http_cmd = g_strdup (http_cmd);
+    req->out_buffer = out_buffer;
+    req->response_cb = response_cb;
+    req->ctx = ctx;
+
+    auth_client_get_data (application_get_auth_client (con->app), FALSE, http_connection_on_auth_data_cb, req);
+    return TRUE;
+
 }

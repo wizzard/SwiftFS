@@ -8,6 +8,7 @@
 #include "hfs_fuse.h"
 #include "client_pool.h"
 #include "http_client.h"
+#include "auth_client.h"
 
 #define APP_LOG "main"
 
@@ -19,8 +20,7 @@ struct _Application {
     HfsFuse *hfs_fuse;
     DirTree *dir_tree;
 
-    HttpConnection *service_con;
-    gint service_con_redirects;
+    AuthClient *auth_client;
 
     ClientPool *write_client_pool;
     ClientPool *read_client_pool;
@@ -28,18 +28,9 @@ struct _Application {
 
     gchar *auth_user;
     gchar *auth_pwd;
-    gchar *auth_token;
 
     gchar *container_name;
-    struct evhttp_uri *uri;
-    const gchar *base_path;
-
-    struct evhttp_uri *storage_url;
-    const gchar *storage_url_host;
-    int storage_url_port;
-    gchar *storage_url_str;
-
-    gchar *tmp_dir;
+    struct evhttp_uri *auth_uri;
 
     gboolean foreground;
     gchar *mountpoint;
@@ -90,39 +81,14 @@ const gchar *application_get_container_name (Application *app)
     return app->container_name;
 }
 
-const gchar *application_get_base_path (Application *app)
-{
-    return app->base_path;
-}
-
-struct evhttp_uri *application_get_storage_uri (Application *app)
-{
-    return app->storage_url;
-}
-
-const gchar *application_get_host (Application *app)
-{
-    return evhttp_uri_get_host (app->uri);
-}
-
-const gchar *application_get_auth_token (Application *app)
-{
-    return app->auth_token;
-}
-
-int application_get_port (Application *app)
-{
-    return evhttp_uri_get_port (app->uri);
-}
-
-const gchar *application_get_tmp_dir (Application *app)
-{
-    return app->tmp_dir;
-}
-
 ConfData *application_get_conf (Application *app)
 {
     return app->conf;
+}
+
+AuthClient *application_get_auth_client (Application *app)
+{
+    return app->auth_client;
 }
 
 /*}}}*/
@@ -217,6 +183,13 @@ static void sigint_cb (G_GNUC_UNUSED evutil_socket_t sig, G_GNUC_UNUSED short ev
 static gint application_finish_initialization_and_run (Application *app)
 {
     struct sigaction sigact;
+
+    auth_client = auth_client_create (app, app->auth_uri);
+    if (!auth_client) {
+        LOG_err (APP_LOG, "Failed to create AuthClient !");
+        event_base_loopexit (app->evbase, NULL);
+        return -1;
+    }
 
     // create ClientPool for reading operations
     app->read_client_pool = client_pool_create (app, app->conf->readers,
@@ -314,69 +287,20 @@ static gint application_finish_initialization_and_run (Application *app)
     return 0;
 }
 
-//  replies with error on initial HEAD request
-static void application_get_service_on_error (HttpConnection *con, void *ctx)
+// AuthData
+static void application_on_auth_data_cb (gpointer ctx, gboolean success, 
+    const gchar *auth_token, const struct evhttp_uri *storage_uri)
 {
     Application *app = (Application *)ctx;
 
-    LOG_err (APP_LOG, "Failed to access  container URL !");
-
-    http_connection_destroy (con);
-    if (app->service_con == con) { // should be always identical?
-        app->service_con = NULL;
+    if (!success) {
+        LOG_err (APP_LOG, "Failed to get AuthToken !");
+        exit (1);
     }
 
-    event_base_loopexit (app->evbase, NULL);
-}
 
-//  replies on initial HEAD request
-static void application_get_service_on_done (HttpConnection *con, void *ctx, 
-        G_GNUC_UNUSED const gchar *buf, G_GNUC_UNUSED size_t buf_len, struct evkeyvalq *headers)
-{
-    Application *app = (Application *)ctx;
-    const char *loc;
     
-    // make sure it breaks infinite redirect loop
-    if (app->service_con_redirects > 20) {
-        LOG_err (APP_LOG, "Too many redirects !");
-        event_base_loopexit (app->evbase, NULL);
-        return;
-    }
-    app->service_con_redirects ++;
-
-    loc = evhttp_find_header (headers, "Location");
-    // redirect detected, use new location
-    if (loc) {
-        http_connection_destroy (con);
-        
-        evhttp_uri_free (app->uri);
-
-        app->uri = evhttp_uri_parse (loc);
-        if (!app->uri) {
-            LOG_err (APP_LOG, "Invalid  service URL: %s", loc);
-            event_base_loopexit (app->evbase, NULL);
-            return;
-        }
-        LOG_debug (APP_LOG, "New service URL: %s", evhttp_uri_get_host (app->uri));
-
-        // perform a new request
-        app->service_con = http_connection_create (app);
-        if (!app->service_con) {
-            LOG_err (APP_LOG, "Failed to execute a request !");
-            event_base_loopexit (app->evbase, NULL);
-            return;
-        }
-
-        if (!http_connection_make_request (app->service_con, "/", "/", "HEAD", NULL,
-            application_get_service_on_done, application_get_service_on_error, app)) {
-
-            LOG_err (APP_LOG, "Failed to execute a request !");
-            event_base_loopexit (app->evbase, NULL);
-            return;
-        }
-    } else {
         application_finish_initialization_and_run (app);
-    }
 }
 
 static void application_destroy (Application *app)
@@ -402,8 +326,8 @@ static void application_destroy (Application *app)
     if (app->sigusr1_ev)
         event_free (app->sigusr1_ev);
     
-    if (app->service_con)
-        http_connection_destroy (app->service_con);
+    if (app->auth_client)
+        auth_client_destroy (app->auth_client);
 
     evdns_base_free (app->dns_base, 0);
     event_base_free (app->evbase);
@@ -459,7 +383,6 @@ int main (int argc, char *argv[])
 
     // init main app structure
     app = g_new0 (Application, 1);
-    app->service_con_redirects = 0;
     app->evbase = event_base_new ();
     app->auth_token = NULL;
 
@@ -467,15 +390,27 @@ int main (int argc, char *argv[])
     // parse conf file
     if (stat (conf_path, &st) == -1) {
         // set default values
+        LOG_msg (APP_LOG, "Configuration file not found, using default settings.");
+        
+        conf_add_boolean (app->conf, "log.use_syslog", TRUE);
+        
+        conf_add_uint (app->conf, "auth.ttl", 85800);
+        
         conf_add_int (app->conf, "pool.writers", 2);
         conf_add_int (app->conf, "pool.readers", 2);
-        conf_add_int (app->conf, "pool.ops", 4);
+        conf_add_int (app->conf, "pool.operations", 4);
+        conf_add_uint (app->conf, "pool.max_requests_per_pool", 100);
+
         conf_add_int (app->conf, "connection.timeout", 20);
         conf_add_int (app->conf, "connection.retries", -1);
-        conf_add_int (app->conf, "connection.http_port", 80);
-        conf_add_uint (app->conf, "dir_cache_max_time", 5);
-        conf_add_int (app->conf, "pool.max_requests_per_pool", 100);
-        conf_add_boolean (app->conf, "use_syslog", TRUE);
+
+        conf_add_uint (app->conf, "filesystem.dir_cache_max_time", 5);
+        conf_add_boolean (app->conf, "filesystem.cache_enabled", TRUE);
+        conf_add_string (app->conf, "filesystem.cache_dir", "/tmp/hydrafs");
+        conf_add_string (app->conf, "filesystem.cache_dir_max_size", "1Gb");
+
+        conf_add_boolean (app->conf, "statistics.enabled", TRUE);
+        conf_add_int (app->conf, "statistics.port", 8011);
     } else {
         if (!conf_parse_file (app->conf, conf_path)) {
             LOG_err (APP_LOG, "Failed to parse configuration file: %s", conf_path);
@@ -666,14 +601,8 @@ int main (int argc, char *argv[])
 
 /*}}}*/
 
-    // perform the initial request to get  service URL (in case of redirect)
-    app->service_con = http_connection_create (app);
-    if (!app->service_con) 
-        return -1;
 
-    if (!http_connection_make_request (app->service_con, "/", "/", "HEAD", NULL,
         application_get_service_on_done, application_get_service_on_error, app))
-        return -1;
 
     // start the loop
     event_base_dispatch (app->evbase);

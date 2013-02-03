@@ -12,6 +12,7 @@ http_client_test_LDADD = $(AM_LDADD) $(DEPS_LIBS)
 
 client_pool_test_SOURCES = $(top_srcdir)/src/http_client.c
 client_pool_test_SOURCES += $(top_srcdir)/src/client_pool.c 
+client_pool_test_SOURCES += $(top_srcdir)/src/auth_client.c 
 client_pool_test_SOURCES += $(top_srcdir)/src/log.c
 client_pool_test_SOURCES += $(top_srcdir)/src/utils.c
 client_pool_test_SOURCES += $(top_srcdir)/src/conf.c

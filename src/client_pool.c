@@ -7,10 +7,11 @@
 
 struct _ClientPool {
     Application *app;
+    ConfData *conf;
+
     struct event_base *evbase;
     struct evdns_base *dns_base;
     GList *l_clients; // the list of PoolClient (HTTPClient or HTTPConnection)
-    guint max_requests; // maximum awaiting clients in queue
     GQueue *q_requests; // the queue of awaiting requests
 };
 
@@ -43,20 +44,15 @@ ClientPool *client_pool_create (Application *app,
     ClientPool *pool;
     gint i;
     PoolClient *pc;
-    AppConf *conf;
 
-    conf = application_get_conf (app);
 
     pool = g_new0 (ClientPool, 1);
     pool->app = app;
+    pool->conf = application_get_conf (app);
     pool->evbase = application_get_evbase (app);
     pool->dns_base = application_get_dnsbase (app);
     pool->l_clients = NULL;
     pool->q_requests = g_queue_new ();
-    if (conf)
-        pool->max_requests = conf->max_requests_per_pool;
-    else
-        pool->max_requests = 100;
    
     for (i = 0; i < client_count; i++) {
         pc = g_new0 (PoolClient, 1);
@@ -114,7 +110,7 @@ gboolean client_pool_get_client (ClientPool *pool, ClientPool_on_client_ready on
     PoolClient *pc;
     
     // check if the awaiting queue is full
-    if (g_queue_get_length (pool->q_requests) >= pool->max_requests) {
+    if (g_queue_get_length (pool->q_requests) >= conf_get_uint (pool->conf, "pool.max_requests_per_pool")) {
         LOG_debug (POOL, "Pool's client awaiting queue is full !");
         return FALSE;
     }

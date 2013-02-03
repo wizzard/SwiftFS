@@ -11,7 +11,7 @@
     such as directory listing, object deleting, etc -->
     <operations type="int">4</operations>
     <!-- max requests in pool queue -->
-    <max_requests_per_pool type="int">100</max_requests_per_pool>
+    <max_requests_per_pool type="uint">100</max_requests_per_pool>
 </pool>
 
 <connection>
@@ -19,13 +19,16 @@
     <timeout type="int">20</timeout>
     <!-- number of retries, before giving up (-1 for infinite loop) -->
     <retries type="int">-1</retries>
-    <!-- default HTTP port -->
-    <http_port type="int">80</http_port>
 </connection>
+
+<auth>
+    <!-- time in seconds before AuthToken expires (24h - 10min) -->
+    <ttl type="uint">85800</ttl>
+</auth>
 
 <filesystem>
     <!-- time to keep directory cache (seconds) -->
-    <dir_cache_max_time type="int">5</dir_cache_max_time>
+    <dir_cache_max_time type="uint">5</dir_cache_max_time>
     <!-- set True to enable objects caching -->
     <cache_enabled type="boolean">True</cache_enabled>
     <!-- directory for storing cache objects -->
