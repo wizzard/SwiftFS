@@ -1,0 +1,42 @@
+<log>
+    <!-- use syslog for error messages -->
+    <use_syslog type="boolean">True</use_syslog>
+</log>
+
+<pool>
+    <!-- number of concurrent connections for each type of operation -->
+    <writes type="int">2</writes>
+    <readers type="int">2</readers>
+    <!-- number of concurrent connections other operations, 
+    such as directory listing, object deleting, etc -->
+    <operations type="int">4</operations>
+    <!-- max requests in pool queue -->
+    <max_requests_per_pool type="int">100</max_requests_per_pool>
+</pool>
+
+<connection>
+    <!-- timeout value for HTTP requests (seconds) -->
+    <timeout type="int">20</timeout>
+    <!-- number of retries, before giving up (-1 for infinite loop) -->
+    <retries type="int">-1</retries>
+    <!-- default HTTP port -->
+    <http_port type="int">80</http_port>
+</connection>
+
+<filesystem>
+    <!-- time to keep directory cache (seconds) -->
+    <dir_cache_max_time type="int">5</dir_cache_max_time>
+    <!-- set True to enable objects caching -->
+    <cache_enabled type="boolean">True</cache_enabled>
+    <!-- directory for storing cache objects -->
+    <cache_dir type="string">/tmp/hydrafs</cache_dir>
+    <!-- maximum size of cache directory -->
+    <cache_dir_max_size type="string">1Gb</cache_dir_max_size>
+</filesystem>
+
+<statistics>
+    <!-- set True if enable statistics HTTP interface -->
+    <enabled type="boolean">True</enabled>
+    <!-- HTTP port -->
+    <port type="int">8011</port>
+</statistics>

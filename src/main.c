@@ -439,7 +439,7 @@ int main (int argc, char *argv[])
     gchar *conf_path;
     struct stat st;
 
-    conf_path = g_build_filename (SYSCONFDIR, "ffs.conf", NULL); 
+    conf_path = g_build_filename (SYSCONFDIR, "hydrafs.conf", NULL); 
     g_snprintf (conf_str, sizeof (conf_str), "Path to configuration file. Default: %s", conf_path);
 
     GOptionEntry entries[] = {
@@ -463,17 +463,25 @@ int main (int argc, char *argv[])
     app->evbase = event_base_new ();
     app->auth_token = NULL;
 
-    app->conf = g_new0 (AppConf, 1);
-    // set default values
-    app->conf->writers = 2;
-    app->conf->readers = 2;
-    app->conf->ops = 4;
-    app->conf->timeout = 20;
-    app->conf->retries = -1;
-    app->conf->http_port = 80;
-    app->conf->dir_cache_max_time = 5;
-    app->conf->max_requests_per_pool = 100;
-    app->conf->use_syslog = TRUE;
+    app->conf = conf_create ();
+    // parse conf file
+    if (stat (conf_path, &st) == -1) {
+        // set default values
+        conf_add_int (app->conf, "pool.writers", 2);
+        conf_add_int (app->conf, "pool.readers", 2);
+        conf_add_int (app->conf, "pool.ops", 4);
+        conf_add_int (app->conf, "connection.timeout", 20);
+        conf_add_int (app->conf, "connection.retries", -1);
+        conf_add_int (app->conf, "connection.http_port", 80);
+        conf_add_uint (app->conf, "dir_cache_max_time", 5);
+        conf_add_int (app->conf, "pool.max_requests_per_pool", 100);
+        conf_add_boolean (app->conf, "use_syslog", TRUE);
+    } else {
+        if (!conf_parse_file (app->conf, conf_path)) {
+            LOG_err (APP_LOG, "Failed to parse configuration file: %s", conf_path);
+            return -1;
+        }
+    }
 
     //XXX: fix it
     app->tmp_dir = g_strdup ("/tmp");
