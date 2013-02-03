@@ -26,6 +26,11 @@
     <ttl type="uint">85800</ttl>
 </auth>
 
+<encryption>
+    <!-- set True if enable encryption/decryption subsystem -->
+    <enabled type="boolean">True</enabled>
+</encryption>
+
 <filesystem>
     <!-- time to keep directory cache (seconds) -->
     <dir_cache_max_time type="uint">5</dir_cache_max_time>

@@ -1,5 +1,5 @@
 AM_CPPFLAGS = -I$(top_srcdir)/include
-bin_PROGRAMS = http_client_test http_client_test_2 client_pool_test auth_client_test conf_test
+bin_PROGRAMS = http_client_test http_client_test_2 client_pool_test auth_client_test conf_test aes_test
 EXTRA_DIST = test.conf.xml
 
 http_client_test_SOURCES = $(top_srcdir)/src/http_client.c
@@ -46,3 +46,8 @@ conf_test_SOURCES += $(top_srcdir)/src/conf.c
 conf_test_SOURCES += conf_test.c
 conf_test_CFLAGS = $(AM_CFLAGS) $(DEPS_CFLAGS)
 conf_test_LDADD = $(AM_LDADD) $(DEPS_LIBS)
+
+aes_test_SOURCES = aes_test.c
+aes_test_CFLAGS = $(AM_CFLAGS) $(DEPS_CFLAGS)
+aes_test_LDADD = $(AM_LDADD) $(DEPS_LIBS)
+
