@@ -5,7 +5,7 @@
 #include "hfs_fuse.h"
 #include "dir_tree.h"
 
-/*{{{ struct */
+/*{{{ struct / defines */
 
 struct _HfsFuse {
     Application *app;
@@ -25,7 +25,9 @@ struct _HfsFuse {
 };
 
 #define FUSE_LOG "fuse"
+/*}}}*/
 
+/*{{{ func declarations */
 static void hfs_fuse_on_read (evutil_socket_t fd, short what, void *arg);
 static void hfs_fuse_readdir (fuse_req_t req, fuse_ino_t ino, 
     size_t size, off_t off, struct fuse_file_info *fi);
@@ -572,6 +574,8 @@ static void hfs_fuse_mkdir (fuse_req_t req, fuse_ino_t parent_ino, const char *n
 }
 /*}}}*/
 
+/*{{{ rmdir operator */
+
 // Remove a directory
 // Valid replies: fuse_reply_err
 // XXX: not used, see hfs_fuse_forget
@@ -583,3 +587,4 @@ static void hfs_fuse_rmdir (fuse_req_t req, fuse_ino_t parent_ino, const char *n
 
     fuse_reply_err (req, 0);
 }
+/*}}}*/

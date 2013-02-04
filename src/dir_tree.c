@@ -7,6 +7,9 @@
 #include "http_connection.h"
 #include "http_client.h"
 #include "client_pool.h"
+#include "hfs_file_operation.h"
+
+/*{{{ struct / defines*/
 
 typedef struct {
     fuse_ino_t ino;
@@ -30,7 +33,8 @@ typedef struct {
     time_t dir_cache_created;
 
     GHashTable *h_dir_tree; // name -> data
-    gpointer op_data;
+
+    HfsFileOp *fop; // file operation object
 } DirEntry;
 
 struct _DirTree {
@@ -48,11 +52,16 @@ struct _DirTree {
 #define DIR_TREE_LOG "dir_tree"
 #define DIR_DEFAULT_MODE S_IFDIR | 0755
 #define FILE_DEFAULT_MODE S_IFREG | 0444
+/*}}}*/
 
+/*{{{ func declarations */
 static DirEntry *dir_tree_add_entry (DirTree *dtree, const gchar *basename, mode_t mode, 
     DirEntryType type, fuse_ino_t parent_ino, off_t size, time_t ctime);
 static void dir_tree_entry_modified (DirTree *dtree, DirEntry *en);
 static void dir_entry_destroy (gpointer data);
+/*}}}*/
+
+/*{{{ create / destroy */
 
 DirTree *dir_tree_create (Application *app)
 {
@@ -80,6 +89,7 @@ void dir_tree_destroy (DirTree *dtree)
     dir_entry_destroy (dtree->root);
     g_free (dtree);
 }
+/*}}}*/
 
 /*{{{ dir_entry operations */
 static void dir_entry_destroy (gpointer data)
@@ -119,7 +129,7 @@ static DirEntry *dir_tree_add_entry (DirTree *dtree, const gchar *basename, mode
         // update directory buffer
         dir_tree_entry_modified (dtree, parent_en);
 
-        if (parent_ino == 1)
+        if (parent_ino == FUSE_ROOT_ID)
             en->fullpath = g_strdup_printf ("/%s", basename);
         else
             en->fullpath = g_strdup_printf ("%s/%s", parent_en->fullpath, basename);
@@ -489,77 +499,16 @@ void dir_tree_setattr (DirTree *dtree, fuse_ino_t ino,
 }
 /*}}}*/
 
-typedef struct {
-    DirTree *dtree;
-    DirEntry *en;
-    fuse_ino_t ino;
-    DirTree_file_read_cb file_read_cb;
-    DirTree_file_open_cb file_open_cb;
-    fuse_req_t c_req;
-    struct fuse_file_info *c_fi;
+/*{{{ dir_tree_file_create */
 
-    size_t c_size;
-    off_t c_off;
-    HttpClient *http;
-
-    int tmp_write_fd; 
-
-    GQueue *q_ranges_requested;
-    off_t total_read;
-    
-    gboolean op_in_progress;
-    
-} DirTreeFileOpData;
-
-typedef struct {
-    size_t size;
-    off_t off;
-    char *write_buf;
-    fuse_req_t c_req;
-} DirTreeFileRange;
-
-/*{{{ dir_tree_add_file */
-
-static DirTreeFileOpData *file_op_data_create (DirTree *dtree, fuse_ino_t ino)
-{
-    DirTreeFileOpData *op_data;
-    
-    op_data = g_new0 (DirTreeFileOpData, 1);
-    op_data->dtree = dtree;
-    op_data->ino = ino;
-    op_data->op_in_progress = FALSE;
-    op_data->q_ranges_requested = g_queue_new ();
-    op_data->total_read = 0;
-    op_data->tmp_write_fd = 0;
-    op_data->http = NULL;
-
-    LOG_debug (DIR_TREE_LOG, "Creating opdata: %p", op_data);
-
-    return op_data;
-}
-
-static void file_op_data_destroy (DirTreeFileOpData *op_data)
-{
-    LOG_debug (DIR_TREE_LOG, "Destroying opdata: %p", op_data);
-    
-    if (op_data && op_data->q_ranges_requested) {
-        if (g_queue_get_length (op_data->q_ranges_requested) > 0)
-            g_queue_free_full (op_data->q_ranges_requested, g_free);
-        else
-            g_queue_free (op_data->q_ranges_requested);
-    }
-    g_free (op_data);
-}
-
-// add new file entry to directory, return new inode
+// add new file entry to directory
 void dir_tree_file_create (DirTree *dtree, fuse_ino_t parent_ino, const char *name, mode_t mode,
     DirTree_file_create_cb file_create_cb, fuse_req_t req, struct fuse_file_info *fi)
 {
     DirEntry *dir_en, *en;
-    DirTreeFileOpData *op_data;
+    HfsFileOp *fop;
     
-    LOG_debug (DIR_TREE_LOG, "Adding new entry '%s' to directory ino: %"INO_FMT, name, parent_ino);
-    
+    // get parent, must be dir
     dir_en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (parent_ino));
     
     // entry not found
@@ -579,29 +528,22 @@ void dir_tree_file_create (DirTree *dtree, fuse_ino_t parent_ino, const char *na
     //XXX: set as new 
     en->is_modified = TRUE;
 
-    op_data = file_op_data_create (dtree, en->ino);
-    op_data->en = en;
-    op_data->ino = en->ino;
-    en->op_data = (gpointer) op_data;
-        
+    fop = hfs_fileop_create (dtree->app);
+    en->fop = fop;
+
+    LOG_debug (DIR_TREE_LOG, "[fop: %p] create %s, directory ino: %"INO_FMT, fop, name, parent_ino);
+
     file_create_cb (req, TRUE, en->ino, en->mode, en->size, fi);
 }
 /*}}}*/
 
-static void dir_tree_file_read_prepare_request (DirTreeFileOpData *op_data, HttpClient *http, off_t off, size_t size);
-static void dir_tree_file_open_on_http_ready (gpointer client, gpointer ctx);
-
+/*{{{ dir_tree_file_open */
 // existing file is opened, create context data
-gboolean dir_tree_file_open (DirTree *dtree, fuse_ino_t ino, struct fuse_file_info *fi, 
+void dir_tree_file_open (DirTree *dtree, fuse_ino_t ino, struct fuse_file_info *fi, 
     DirTree_file_open_cb file_open_cb, fuse_req_t req)
 {
-    DirTreeFileOpData *op_data;
     DirEntry *en;
-
-    op_data = file_op_data_create (dtree, ino);
-    op_data->c_fi = fi;
-    op_data->c_req = req;
-    op_data->file_open_cb = file_open_cb;
+    HfsFileOp *fop;
 
     en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (ino));
 
@@ -609,56 +551,25 @@ gboolean dir_tree_file_open (DirTree *dtree, fuse_ino_t ino, struct fuse_file_in
     // or it's not a directory type ?
     if (!en) {
         LOG_msg (DIR_TREE_LOG, "Entry (ino = %"INO_FMT") not found !", ino);
-        file_open_cb (op_data->c_req, FALSE, op_data->c_fi);
-        return FALSE;
+        file_open_cb (req, FALSE, fi);
+        return;
     }
 
-    op_data->en = en;
-    
-    op_data->en->op_data = (gpointer) op_data;
+    fop = hfs_fileop_create (dtree->app);
+    en->fop = fop;
 
-    LOG_debug (DIR_TREE_LOG, "[%p] dir_tree_open inode %"INO_FMT" op: %p", fi, ino, op_data);
+    LOG_debug (DIR_TREE_LOG, "[fop: %p] dir_tree_open inode %"INO_FMT, fop, ino);
 
-    if (!client_pool_get_client (application_get_read_client_pool (dtree->app), dir_tree_file_open_on_http_ready, op_data)) {
-        LOG_err (DIR_TREE_LOG, "Failed to get HttpConnection from the pool !");
-    }
-
-    return TRUE;
+    file_open_cb (req, TRUE, fi);
 }
+/*}}}*/
 
-static void dir_tree_file_release_on_entry_sent_cb (gpointer ctx, gboolean success)
-{
-    DirTreeFileOpData *op_data = (DirTreeFileOpData *) ctx;
-    // XXX: entry may be deleted
-    
-    op_data->en->is_modified = FALSE;
-
-    LOG_debug (DIR_TREE_LOG, "XXXX: File is sent:  ino = %"INO_FMT", op: %p, fd: %d", op_data->ino, op_data, op_data->tmp_write_fd);
-    
-    close (op_data->tmp_write_fd);
-
-    file_op_data_destroy (op_data);
-}
-
-// HTTP client is ready for a new request
-static void dir_tree_file_release_on_http_ready (gpointer client, gpointer ctx)
-{
-    HttpConnection *http_con = (HttpConnection *) client;
-    DirTreeFileOpData *op_data = (DirTreeFileOpData *) ctx;
-
-    LOG_debug (DIR_TREE_LOG, "Acquired http client ! ino: %"INO_FMT" op: %p tmp: %d",op_data->ino, op_data, op_data->tmp_write_fd);
-
-    http_connection_acquire (http_con);
-
-    http_connection_file_send (http_con, op_data->tmp_write_fd, op_data->en->fullpath, 
-        dir_tree_file_release_on_entry_sent_cb, op_data);
-}
-
+/*{{{ dir_tree_file_release*/
 // file is closed, free context data
 void dir_tree_file_release (DirTree *dtree, fuse_ino_t ino, struct fuse_file_info *fi)
 {
     DirEntry *en;
-    DirTreeFileOpData *op_data = NULL;
+    HfsFileOp *fop;
 
     en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (ino));
 
@@ -670,138 +581,15 @@ void dir_tree_file_release (DirTree *dtree, fuse_ino_t ino, struct fuse_file_inf
         return;
     }
 
-    op_data = (DirTreeFileOpData *) en->op_data;
-    LOG_debug (DIR_TREE_LOG, "dir_tree_file_release  inode %d, op: %p", ino, op_data);
- 
-    if (op_data->http)
-        http_client_release (op_data->http);
-    
-    // releasing written file
-    if (op_data->tmp_write_fd) {
-        if (!client_pool_get_client (application_get_write_client_pool (dtree->app), dir_tree_file_release_on_http_ready, op_data)) {
-            LOG_err (DIR_TREE_LOG, "Failed to get HttpConnection from the pool !");
-        }
-    } else {
-        file_op_data_destroy (op_data);
-    }
+    fop = en->fop;
+
+    LOG_debug (DIR_TREE_LOG, "[fop: %p] dir_tree_file_release inode: %"INO_FMT, fop, ino);
+
+    hfs_fileop_release (fop);
 }
+/*}}}*/
 
-/*{{{ file read*/
-static void dir_tree_file_open_on_http_ready (gpointer client, gpointer ctx)
-{
-    HttpClient *http = (HttpClient *) client;
-    DirTreeFileOpData *op_data = (DirTreeFileOpData *) ctx;
-    DirTreeFileRange *range;
-
-    LOG_debug (DIR_TREE_LOG, "Acquired http client %s, op: %p", op_data->en->fullpath, op_data);
-    
-    http_client_acquire (http);
-    op_data->http = http;
-    
-    if (op_data->file_open_cb)
-        op_data->file_open_cb (op_data->c_req, TRUE, op_data->c_fi);
-    
-    op_data->c_req = NULL;
-    op_data->c_size = 0;
-    op_data->c_req = 0;
-    op_data->op_in_progress = FALSE;
-
-    // get the first chunk request
-    range = g_queue_pop_head (op_data->q_ranges_requested);
-    if (range) {
-        op_data->c_size = range->size;
-        op_data->c_off = range->off;
-        op_data->c_req = range->c_req;
-        g_free (range);
-
-        LOG_debug (DIR_TREE_LOG, "[%p %p] HTTP client is ready for Read Object inode %"INO_FMT", path: %s", 
-            op_data->c_req, http, op_data->ino, op_data->en->fullpath);
-
-        op_data->op_in_progress = TRUE;
-
-        // perform the first request
-        dir_tree_file_read_prepare_request (op_data, http, op_data->c_off, op_data->c_size);
-    }
-}
-
-static void dir_tree_file_read_on_last_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpointer ctx)
-{
-    gchar *buf = NULL;
-    size_t buf_len;
-    DirTreeFileOpData *op_data = (DirTreeFileOpData *) ctx;
-    DirTreeFileRange *range;
-
-    buf_len = evbuffer_get_length (input_buf);
-    buf = (gchar *) evbuffer_pullup (input_buf, buf_len);
-    
-    /*
-    range = g_queue_pop_head (op_data->q_ranges_requested);
-    if (range) {
-        op_data->c_size = range->size;
-        op_data->c_off = range->off;
-        op_data->c_req = range->c_req;
-    }
-    */
-
-    op_data->total_read += buf_len;
-    LOG_debug (DIR_TREE_LOG, "[%p %p] lTOTAL read: %zu (req: %zu), orig size: %zu, TOTAL: %"OFF_FMT", Qsize: %zu, op: %p", 
-        op_data->c_req, http,
-        buf_len, op_data->c_size, op_data->en->size, op_data->total_read, g_queue_get_length (op_data->q_ranges_requested),
-        op_data);
-    
-    if (op_data->file_read_cb)
-        op_data->file_read_cb (op_data->c_req, TRUE, buf, buf_len);
-
-    evbuffer_drain (input_buf, buf_len);
-    
-    // if there are more pending chunk requests 
-    if (g_queue_get_length (op_data->q_ranges_requested) > 0) {
-        range = g_queue_pop_head (op_data->q_ranges_requested);
-        LOG_debug (DIR_TREE_LOG, "[%p] more data: %zd", range->c_req, range->size);
-        op_data->c_size = range->size;
-        op_data->c_off = range->off;
-        op_data->c_req = range->c_req;
-        g_free (range);
-
-        op_data->op_in_progress = TRUE;
-        // perform the next chunk request
-        dir_tree_file_read_prepare_request (op_data, http, op_data->c_off, op_data->c_size);
-    } else {
-        LOG_debug (DIR_TREE_LOG, "Done downloading !!");
-        op_data->op_in_progress = FALSE;
-    }
-}
-
-// the part of chunk is received
-/* unused for now
-static void dir_tree_file_read_on_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpointer ctx)
-{
-    gchar *buf;
-    size_t buf_len;
-    DirTreeFileOpData *op_data = (DirTreeFileOpData *) ctx;
-
-    buf_len = evbuffer_get_length (input_buf);
-    buf = (gchar *) evbuffer_pullup (input_buf, buf_len);
-    
-    // LOG_debug (DIR_TREE_LOG, "Read Object onData callback, in size: %zu", buf_len);
-}
-*/
-
-// prepare HTTP request
-static void dir_tree_file_read_prepare_request (DirTreeFileOpData *op_data, HttpClient *http, off_t off, size_t size)
-{
-
-    http_client_request_reset (http);
-
-    http_client_set_cb_ctx (http, op_data);
-//    http_client_set_on_chunk_cb (http, dir_tree_file_read_on_chunk_cb);
-    http_client_set_on_last_chunk_cb (http, dir_tree_file_read_on_last_chunk_cb);
-    http_client_set_output_length (http, 0);
-    
-    http_client_start_request_to_storage_url (http, Method_get, op_data->en->fullpath);
-}
-
-// add new chunk range to the chunks pending queue
+/*{{{ dir_tree_file_read */
 void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino, 
     size_t size, off_t off,
     DirTree_file_read_cb file_read_cb, fuse_req_t req,
@@ -809,8 +597,7 @@ void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino,
 {
     DirEntry *en;
     char full_name[1024];
-    DirTreeFileOpData *op_data;
-    DirTreeFileRange *range;
+    HfsFileOp *fop;
     
     en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (ino));
 
@@ -822,47 +609,31 @@ void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino,
         return;
     }
     
-    op_data = (DirTreeFileOpData *) en->op_data;
+    fop = en->fop;
+
+    LOG_debug (DIR_TREE_LOG, "[fop: %p] read inode %"INO_FMT", size: %zd, off: %"OFF_FMT, fop, ino, size, off);
     
-    LOG_debug (DIR_TREE_LOG, "[%p] Read Object  inode %"INO_FMT", size: %zd, off: %"OFF_FMT", op: %p", req, ino, size, off, op_data);
-    
-    op_data->file_read_cb = file_read_cb;
-    op_data->en = en;
-    op_data->dtree = dtree;
-
-    range = g_new0 (DirTreeFileRange, 1);
-    range->off = off;
-    range->size = size;
-    range->c_req = req;
-    g_queue_push_tail (op_data->q_ranges_requested, range);
-    LOG_debug (DIR_TREE_LOG, "[%p] more data b: %zd", range->c_req, range->size);
-
-    // already reading data
-    if (op_data->op_in_progress) {
-        return;
-    }
-
-    if (op_data->http) {
-        LOG_debug (DIR_TREE_LOG, "Adding from main");
-        range = g_queue_pop_head (op_data->q_ranges_requested);
-        if (range) {
-            op_data->c_size = range->size;
-            op_data->c_off = range->off;
-            op_data->c_req = range->c_req;
-            g_free (range);
-            
-            // perform the next chunk request
-            op_data->op_in_progress = TRUE;
-            dir_tree_file_read_prepare_request (op_data, op_data->http, op_data->c_off, op_data->c_size);
-        }
-        
-        return;
-    }
-
 }
 /*}}}*/
 
-/*{{{ file write */
+/*{{{ dir_tree_file_write */
+
+typedef struct {
+    DirTree_file_write_cb file_write_cb;
+    fuse_req_t req;
+} FileWriteOpData;
+
+// buffer is written into local file, or error
+static void dir_tree_on_buffer_written_cb (HfsFileOp *fop, gpointer ctx, gboolean success, size_t count)
+{
+    FileWriteOpData *op_data = (FileWriteOpData *) ctx;
+
+    op_data->file_write_cb (op_data->req, success, count);
+
+    LOG_debug (DIR_TREE_LOG, "[fop: %p] buffer written, count: %zu", fop, count);
+    
+    g_free (op_data);
+}
 
 // send data via HTTP client
 void dir_tree_file_write (DirTree *dtree, fuse_ino_t ino, 
@@ -871,8 +642,8 @@ void dir_tree_file_write (DirTree *dtree, fuse_ino_t ino,
     struct fuse_file_info *fi)
 {
     DirEntry *en;
-    DirTreeFileOpData *op_data;
-    ssize_t out_size;
+    HfsFileOp *fop;
+    FileWriteOpData *op_data;
 
     en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (ino));
 
@@ -884,44 +655,19 @@ void dir_tree_file_write (DirTree *dtree, fuse_ino_t ino,
         return;
     }
     
-    op_data = (DirTreeFileOpData *) en->op_data;
+    fop = en->fop;
     
-    LOG_debug (DIR_TREE_LOG, "[%p] Writing Object  inode %"INO_FMT", size: %zd, off: %"OFF_FMT, op_data, ino, size, off);
+    LOG_debug (DIR_TREE_LOG, "[fop: %p] write inode %"INO_FMT", size: %zd, off: %"OFF_FMT, fop, ino, size, off);
 
-    // if tmp file is not opened
-    if (!op_data->tmp_write_fd) {
-        char filename[1024];
+    op_data = g_new0 (FileWriteOpData, 1);
+    op_data->file_write_cb = file_write_cb;
+    op_data->req = req;
 
-        op_data->en = en;
-        op_data->op_in_progress = TRUE;
-        snprintf (filename, sizeof (filename), "%s/ffs.XXXXXX", conf_get_string (dtree->conf, "filesystem.cache_dir"));
-        op_data->tmp_write_fd = mkstemp (filename);
-        if (op_data->tmp_write_fd < 0) {
-            LOG_err (DIR_TREE_LOG, "Failed to create tmp file !");
-            file_write_cb (req, FALSE, 0);
-            return;
-        }
-
-        LOG_debug (DIR_TREE_LOG, "Creating tmp file: %d op: %p", op_data->tmp_write_fd, op_data);
-    }
-
-    // if http client is not acquired yet
-    //if (!op_data->con_http) {
-    //}
-    
-    //XXX: here decide if switch to multi part upload
-    out_size = pwrite (op_data->tmp_write_fd, buf, size, off);
-    if (out_size < 0) {
-        file_write_cb (req, FALSE, 0);
-        LOG_err (DIR_TREE_LOG, "Failed to write to tmp file !");
-        return;
-    } else
-        file_write_cb (req, TRUE, out_size);
-
+    hfs_fileop_write_buffer (fop, buf, size, off, dir_tree_on_buffer_written_cb, op_data);
 }
 /*}}}*/
 
-/*{{{ file remove*/
+/*{{{ dir_tree_file_remove */
 
 typedef struct {
     DirTree *dtree;
@@ -939,19 +685,8 @@ static void dir_tree_file_remove_on_http_client_data_cb (HttpConnection *http_co
     
     data->en->age = 0;
     dir_tree_entry_modified (data->dtree, data->en);
-    data->file_remove_cb (data->req, TRUE);
 
-    g_free (data);
-    
-    http_connection_release (http_con);
-}
-
-// error 
-static void dir_tree_file_remove_on_http_client_error_cb (HttpConnection *http_con, gpointer ctx)
-{
-    FileRemoveData *data = (FileRemoveData *) ctx;
-    
-    data->file_remove_cb (data->req, FALSE);
+    data->file_remove_cb (data->req, success);
 
     g_free (data);
     
@@ -989,7 +724,7 @@ static void dir_tree_file_remove_on_http_client_cb (gpointer client, gpointer ct
 }
 
 // remove file
-gboolean dir_tree_file_remove (DirTree *dtree, fuse_ino_t ino, DirTree_file_remove_cb file_remove_cb, fuse_req_t req)
+void dir_tree_file_remove (DirTree *dtree, fuse_ino_t ino, DirTree_file_remove_cb file_remove_cb, fuse_req_t req)
 {
     DirEntry *en;
     FileRemoveData *data;
@@ -1003,13 +738,13 @@ gboolean dir_tree_file_remove (DirTree *dtree, fuse_ino_t ino, DirTree_file_remo
     if (!en) {
         LOG_err (DIR_TREE_LOG, "Entry (ino = %"INO_FMT") not found !", ino);
         file_remove_cb (req, FALSE);
-        return FALSE;
+        return;
     }
 
     if (en->type != DET_file) {
         LOG_err (DIR_TREE_LOG, "Entry (ino = %"INO_FMT") is not a file !", ino);
         file_remove_cb (req, FALSE);
-        return FALSE;
+        return;
     }
 
     data = g_new0 (FileRemoveData, 1);
@@ -1021,16 +756,14 @@ gboolean dir_tree_file_remove (DirTree *dtree, fuse_ino_t ino, DirTree_file_remo
 
     client_pool_get_client (application_get_ops_client_pool (dtree->app),
         dir_tree_file_remove_on_http_client_cb, data);
-        
-    return TRUE;
 }
 /*}}}*/
 
+/*{{{ dir_tree_dir_create */
 void dir_tree_dir_create (DirTree *dtree, fuse_ino_t parent_ino, const char *name, mode_t mode,
      dir_tree_mkdir_cb mkdir_cb, fuse_req_t req)
 {
     DirEntry *dir_en, *en;
-    DirTreeFileOpData *op_data;
     
     LOG_debug (DIR_TREE_LOG, "Creating dir: %s", name);
     
@@ -1058,4 +791,4 @@ void dir_tree_dir_create (DirTree *dtree, fuse_ino_t parent_ino, const char *nam
     en->mode = DIR_DEFAULT_MODE;
 
     mkdir_cb (req, TRUE, en->ino, en->mode, en->size, en->ctime);
-}
+}/*}}}*/
