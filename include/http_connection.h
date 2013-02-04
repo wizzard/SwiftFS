@@ -69,4 +69,9 @@ gboolean http_connection_make_request_to_storage_url (HttpConnection *con,
     HttpConnection_response_cb response_cb,
     gpointer ctx);
 
+// get Container metadata information
+typedef void (*HttpConnection_container_meta_cb) (gpointer ctx, gboolean success);
+void http_connection_get_container_meta (HttpConnection *con,
+    HttpConnection_container_meta_cb container_meta_cb, gpointer ctx);
+
 #endif

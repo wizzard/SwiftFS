@@ -22,6 +22,8 @@ struct _Application {
 
     AuthClient *auth_client;
 
+    HfsEncryption *enc;
+
     ClientPool *write_client_pool;
     ClientPool *read_client_pool;
     ClientPool *ops_client_pool;
@@ -89,6 +91,11 @@ ConfData *application_get_conf (Application *app)
 AuthClient *application_get_auth_client (Application *app)
 {
     return app->auth_client;
+}
+
+HfsEncryption *application_get_encryption (Application *app)
+{
+    return app->enc;
 }
 
 /*}}}*/
@@ -184,51 +191,6 @@ static gint application_finish_initialization_and_run (Application *app)
 {
     struct sigaction sigact;
 
-    app->auth_client = auth_client_create (app, app->auth_uri);
-    if (!app->auth_client) {
-        LOG_err (APP_LOG, "Failed to create AuthClient !");
-        event_base_loopexit (app->evbase, NULL);
-        return -1;
-    }
-
-    // create ClientPool for reading operations
-    app->read_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.readers"),
-        http_client_create,
-        http_client_destroy,
-        http_client_set_on_released_cb,
-        http_client_check_rediness
-        );
-    if (!app->read_client_pool) {
-        LOG_err (APP_LOG, "Failed to create ClientPool !");
-        event_base_loopexit (app->evbase, NULL);
-        return -1;
-    }
-
-    // create ClientPool for writing operations
-    app->write_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.writers"),
-        http_connection_create,
-        http_connection_destroy,
-        http_connection_set_on_released_cb,
-        http_connection_check_rediness
-        );
-    if (!app->write_client_pool) {
-        LOG_err (APP_LOG, "Failed to create ClientPool !");
-        event_base_loopexit (app->evbase, NULL);
-        return -1;
-    }
-
-    // create ClientPool for various operations
-    app->ops_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.operations"),
-        http_connection_create,
-        http_connection_destroy,
-        http_connection_set_on_released_cb,
-        http_connection_check_rediness
-        );
-    if (!app->ops_client_pool) {
-        LOG_err (APP_LOG, "Failed to create ClientPool !");
-        event_base_loopexit (app->evbase, NULL);
-        return -1;
-    }
 
 /*{{{ DirTree*/
     app->dir_tree = dir_tree_create (app);
@@ -285,6 +247,27 @@ static gint application_finish_initialization_and_run (Application *app)
         fuse_daemonize (0);
 
     return 0;
+}
+
+static void application_on_container_meta_cb (gpointer ctx, gboolean success)
+{
+    Application *app = (Application *) ctx;
+
+    if (!success) {
+        LOG_err (APP_LOG, "Failed to get container (%s) information !", application_get_container_name (app));
+        event_base_loopexit (app->evbase, NULL);
+        return;
+    }
+
+    application_finish_initialization_and_run (app);
+}
+
+static void application_on_connection_client_cb (gpointer client, gpointer ctx)
+{
+    HttpConnection *con = (HttpConnection *) client;
+    Application *app = (Application *) ctx;
+
+    http_connection_get_container_meta (con, application_on_container_meta_cb, app);
 }
 
 static void application_destroy (Application *app)
@@ -488,6 +471,9 @@ int main (int argc, char *argv[])
         conf_add_string (app->conf, "filesystem.cache_dir_max_size", "1Gb");
         conf_add_uint (app->conf, "filesystem.segment_size", 5242880); // 5mb
 
+        conf_add_boolean (app->conf, "encryption.enabled", FALSE);
+        conf_add_string (app->conf, "encryption.key_file", "");
+
         conf_add_boolean (app->conf, "statistics.enabled", TRUE);
         conf_add_int (app->conf, "statistics.port", 8011);
     } else {
@@ -508,8 +494,67 @@ int main (int argc, char *argv[])
 
 /*}}}*/
 
-    // init subsystems
-    application_finish_initialization_and_run (app);
+    // try to init Encryption
+    if (conf_get_boolean (app->conf, "encryption.enabled")) {
+        app->enc = hfs_encryption_create (app);
+        if (!app->enc)
+            return -1;
+        LOG_msg (APP_LOG, "Encryption is enabled!");
+    } else {
+        LOG_msg (APP_LOG, "Encryption is disabled!");
+        app->enc = NULL;
+    }
+
+    app->auth_client = auth_client_create (app, app->auth_uri);
+    if (!app->auth_client) {
+        LOG_err (APP_LOG, "Failed to create AuthClient !");
+        event_base_loopexit (app->evbase, NULL);
+        return -1;
+    }
+
+    // create ClientPool for reading operations
+    app->read_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.readers"),
+        http_client_create,
+        http_client_destroy,
+        http_client_set_on_released_cb,
+        http_client_check_rediness
+        );
+    if (!app->read_client_pool) {
+        LOG_err (APP_LOG, "Failed to create ClientPool !");
+        event_base_loopexit (app->evbase, NULL);
+        return -1;
+    }
+
+    // create ClientPool for writing operations
+    app->write_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.writers"),
+        http_connection_create,
+        http_connection_destroy,
+        http_connection_set_on_released_cb,
+        http_connection_check_rediness
+        );
+    if (!app->write_client_pool) {
+        LOG_err (APP_LOG, "Failed to create ClientPool !");
+        event_base_loopexit (app->evbase, NULL);
+        return -1;
+    }
+
+    // create ClientPool for various operations
+    app->ops_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.operations"),
+        http_connection_create,
+        http_connection_destroy,
+        http_connection_set_on_released_cb,
+        http_connection_check_rediness
+        );
+    if (!app->ops_client_pool) {
+        LOG_err (APP_LOG, "Failed to create ClientPool !");
+        event_base_loopexit (app->evbase, NULL);
+        return -1;
+    }
+
+    if (!client_pool_get_client (application_get_ops_client_pool (app), application_on_connection_client_cb, app)) {
+        LOG_err (APP_LOG, "Failed to get HTTP client !");
+        return 1;
+    }
 
     // start the loop
     event_base_dispatch (app->evbase);

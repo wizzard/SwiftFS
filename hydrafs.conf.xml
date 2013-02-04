@@ -29,6 +29,11 @@
 <encryption>
     <!-- set True if enable encryption/decryption subsystem -->
     <enabled type="boolean">True</enabled>
+    <!-- path to key file -->
+    <key_file type="string">test.key</key_file>
+    <!-- two integers for salt -->
+    <salt1 type="uint">5544</salt1>
+    <salt2 type="uint">6523</salt2>
 </encryption>
 
 <filesystem>

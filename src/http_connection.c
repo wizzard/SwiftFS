@@ -260,6 +260,8 @@ gboolean http_connection_make_request_ (HttpConnection *con,
         cmd_type = EVHTTP_REQ_PUT;
     } else if (!strcasecmp (http_cmd, "DELETE")) {
         cmd_type = EVHTTP_REQ_DELETE;
+    } else if (!strcasecmp (http_cmd, "HEAD")) {
+        cmd_type = EVHTTP_REQ_HEAD;
     } else {
         LOG_err (CON_LOG, "Unsupported HTTP method: %s", http_cmd);
         return FALSE;

@@ -77,6 +77,7 @@ typedef struct _HfsFuse HfsFuse;
 typedef struct _ClientPool ClientPool;
 typedef enum _LogLevel LogLevel;
 typedef struct _ConfData ConfData;
+typedef struct _HfsEncryption HfsEncryption;
 
 struct event_base *application_get_evbase (Application *app);
 struct evdns_base *application_get_dnsbase (Application *app);
@@ -88,6 +89,7 @@ ClientPool *application_get_write_client_pool (Application *app);
 ClientPool *application_get_ops_client_pool (Application *app);
 DirTree *application_get_dir_tree (Application *app);
 AuthClient *application_get_auth_client (Application *app);
+HfsEncryption *application_get_encryption (Application *app);
 
 #include "log.h" 
 #include "utils.h" 
