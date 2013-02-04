@@ -322,19 +322,19 @@ static void http_connection_on_auth_data_cb (gpointer ctx, gboolean success,
 
     if (!success) {
         LOG_err (CON_LOG, "Failed to get AuthToken !");
-        goto done;
+        // inform higher level
+        req->response_cb (req->con, req->ctx, NULL, 0, NULL, FALSE);
+    } else {
+        url = g_strdup_printf ("%s%s", storage_uri, req->resource_path);
+        if (req->con->auth_token)
+            g_free (req->con->auth_token);
+        req->con->auth_token = g_strdup (auth_token);
+
+        http_connection_make_request_ (req->con, url, req->http_cmd, req->out_buffer, req->response_cb, req->ctx);
+
+        g_free (url);
     }
-
-    url = g_strdup_printf ("%s%s", storage_uri, req->resource_path);
-    if (req->con->auth_token)
-        g_free (req->con->auth_token);
-    req->con->auth_token = g_strdup (auth_token);
-
-    http_connection_make_request_ (req->con, url, req->http_cmd, req->out_buffer, req->response_cb, req->ctx);
-
-    g_free (url);
-
-done:
+    
     g_free (req->resource_path);
     g_free (req->http_cmd);
     g_free (req);

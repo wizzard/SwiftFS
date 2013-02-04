@@ -9,6 +9,7 @@
 #include "client_pool.h"
 #include "http_client.h"
 #include "auth_client.h"
+#include "hfs_encryption.h"
 
 #define APP_LOG "main"
 
@@ -324,7 +325,6 @@ int main (int argc, char *argv[])
     gchar **s_config = NULL;
     gchar *progname;
     gboolean foreground = FALSE;
-    GKeyFile *key_file;
     gchar conf_str[1023];
     gchar *conf_path;
     struct stat st;
@@ -493,6 +493,18 @@ int main (int argc, char *argv[])
     logger_set_syslog (conf_get_boolean (app->conf, "log.use_syslog"));
 
 /*}}}*/
+    
+    // make sure tmp directory is accessible 
+    if (g_access (conf_get_string (app->conf, "filesystem.cache_dir"), F_OK | W_OK) == -1) {
+        // try to create it
+        int mask;
+        // create directory,  drwxr------
+        mask = S_IRUSR | S_IWUSR | S_IXUSR;
+        if (g_mkdir (conf_get_string (app->conf, "filesystem.cache_dir"), mask) == -1) {
+            LOG_err (APP_LOG, "Failed to create temporary directory: %s - %s", conf_get_string (app->conf, "filesystem.cache_dir"), strerror (errno));
+            return -1;
+        }
+    }
 
     // try to init Encryption
     if (conf_get_boolean (app->conf, "encryption.enabled")) {

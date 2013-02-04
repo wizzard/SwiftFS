@@ -71,6 +71,7 @@ void file_entry_write_buffer (FileEntry *fentry,
     
     // check if we need to flush segment buffer
     if (evbuffer_get_length (fentry->segment_buf) >= conf_get_uint (fentry->conf, "filesystem.segment_size")) {
+        // XXX: encrypt
         // XXX: add task to ClientPool
     } else {
         // data is added to the current segment buffer
