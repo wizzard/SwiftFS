@@ -5,7 +5,7 @@
 
 <pool>
     <!-- number of concurrent connections for each type of operation -->
-    <writes type="int">2</writes>
+    <writers type="int">2</writers>
     <readers type="int">2</readers>
     <!-- number of concurrent connections other operations, 
     such as directory listing, object deleting, etc -->
@@ -40,6 +40,8 @@
     <cache_dir type="string">/tmp/hydrafs</cache_dir>
     <!-- maximum size of cache directory -->
     <cache_dir_max_size type="string">1Gb</cache_dir_max_size>
+    <!-- segment size for upload / download files (5mb) -->
+    <segment_size>5242880</segment_size>
 </filesystem>
 
 <statistics>

@@ -6,30 +6,36 @@
 
 /*{{{ struct */
 struct _FileEntry {
+    Application *app;
+    ConfData *conf;
+
     gboolean released; // a simple version of ref counter.
     size_t current_size; // total bytes after read / write calls
-    struct evbuffer *piece_buf; // current piece buffer
-    size_t piece_max_size; // piece max size
+    struct evbuffer *segment_buf; // current segment buffer
+    size_t segment_count; // current count of segments uploaded / downloaded
 };
 /*}}}*/
 
 #define FENTRY_LOG "fentry"
 
-FileEntry *file_entry_create ()
+FileEntry *file_entry_create (Application *app)
 {
     FileEntry *fentry;
 
     fentry = g_new0 (FileEntry, 1);
+    fentry->app = app;
+    fentry->conf = application_get_conf (app);
     fentry->released = FALSE;
     fentry->current_size = 0;
-    fentry->piece_buf = evbuffer_new ();
-    fentry->piece_max_size = 1024 * 1024 * 10; // 10 mb
+    fentry->segment_buf = evbuffer_new ();
+    fentry->segment_count = 0;
 
     return fentry;
 }
 
 void file_entry_destroy (FileEntry *fentry)
 {
+    evbuffer_free (fentry->segment_buf);
     g_free (fentry);
 }
 
@@ -38,13 +44,13 @@ void file_entry_release (FileEntry *fentry)
 {
     fentry->released = TRUE;
 
-    // send .manifest file if there more than 1 part uploaded
-    if (fentry->parts > 1) {
+    // send .manifest file if there more than 1 segment uploaded
+    if (fentry->segment_count > 1) {
     }
 }
 
-// Add data to file entry piece buffer
-// if piece buffer exceeds MAX size then send piece buffer to server
+// Add data to file entry segment buffer
+// if segment buffer exceeds MAX size then send segment buffer to server
 // execute callback function when data either is sent or added to buffer
 void file_entry_write_buffer (FileEntry *fentry,
     const char *buf, size_t buf_size, off_t off,
@@ -60,19 +66,19 @@ void file_entry_write_buffer (FileEntry *fentry,
 
     // XXX: add to CacheMng
 
-    evbuffer_add (fentry->piece_buf, buf, buf_size);
+    evbuffer_add (fentry->segment_buf, buf, buf_size);
     fentry->current_size += buf_size;
     
-    // check if we need to flush piece
-    if (evbuffer_get_length (fentry->piece_buf) >= fentry->piece_max_size) {
+    // check if we need to flush segment buffer
+    if (evbuffer_get_length (fentry->segment_buf) >= conf_get_uint (fentry->conf, "filesystem.segment_size")) {
         // XXX: add task to ClientPool
     } else {
-        // data is added to piece buffer
+        // data is added to the current segment buffer
         on_buffer_written (callback_data, TRUE);
     }
 }
 
-// Send request to server to get piece buffer
+// Send request to server to get segment buffer
 void file_entry_read_buffer (FileEntry *fentry,
     size_t size, off_t off,
     FileEntry_on_buffer_read on_buffer_read, gpointer callback_data)

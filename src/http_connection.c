@@ -233,6 +233,7 @@ gboolean http_connection_make_request_ (HttpConnection *con,
     int res;
     enum evhttp_cmd_type cmd_type;
     struct evhttp_uri *uri;
+    gchar *req_uri;
 
     // connect
     if (!con->evcon) {
@@ -284,9 +285,14 @@ gboolean http_connection_make_request_ (HttpConnection *con,
     }
 
     LOG_msg (CON_LOG, "[%p] New request: %s", con, url);
-
-    res = evhttp_make_request (http_connection_get_evcon (con), req, cmd_type, evhttp_uri_get_path (uri));
     
+    if (evhttp_uri_get_query (uri))
+        req_uri = g_strdup_printf ("%s?%s", evhttp_uri_get_path (uri), evhttp_uri_get_query (uri));
+    else
+        req_uri = g_strdup (evhttp_uri_get_path (uri));
+    res = evhttp_make_request (http_connection_get_evcon (con), req, cmd_type, req_uri);
+    
+    g_free (req_uri);
     evhttp_uri_free (uri);
 
     if (res < 0) {

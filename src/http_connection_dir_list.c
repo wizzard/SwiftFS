@@ -27,6 +27,7 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
     xmlParserCtxtPtr xmlctx;
     //struct tm last_modified;
     gchar *name = NULL;
+    time_t last_modified = time (NULL);
 
     xmlctx = xmlCreatePushParserCtxt (NULL, NULL, "", 0, NULL);
     xmlParseChunk (xmlctx, (char *)xml, xml_len, 0);
@@ -72,14 +73,14 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
                 }
 
                 if (!strcasecmp((const char *)anode->name, "last_modified")) {
-                    struct tm last_modified;
-                    strptime(content, "%FT%T", &last_modified);
-                    //last_modified = mktime(&last_modified);
+                    struct tm tmp;
+                    strptime (content, "%FT%T", &tmp);
+                    last_modified = mktime(&tmp);
                 }
             }
             
-            LOG_debug (CON_DIR_LOG, ">> got file entry: %s", name);
-            dir_tree_update_entry (dir_list->dir_tree, dir_list->dir_path, DET_file, dir_list->ino, name, size);
+            //LOG_debug (CON_DIR_LOG, ">> got file entry: %s", name);
+            dir_tree_update_entry (dir_list->dir_tree, dir_list->dir_path, DET_file, dir_list->ino, name, size, last_modified);
 
         // directory
         } else if (is_subdir) {
@@ -102,8 +103,8 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
                 }
             }
 
-            LOG_debug (CON_DIR_LOG, ">> got dir entry: %s", name);
-            dir_tree_update_entry (dir_list->dir_tree, dir_list->dir_path, DET_dir, dir_list->ino, name, 0);
+            //LOG_debug (CON_DIR_LOG, ">> got dir entry: %s", name);
+            dir_tree_update_entry (dir_list->dir_tree, dir_list->dir_path, DET_dir, dir_list->ino, name, 0, last_modified);
         } else {
             LOG_debug (CON_DIR_LOG, "unknown element: %s", onode->name);
         }
@@ -140,7 +141,7 @@ static void http_connection_on_directory_listing_data (HttpConnection *con, void
     struct evkeyvalq *headers, gboolean success)
 {   
     DirListRequest *dir_req = (DirListRequest *) ctx;
-    const gchar *next_marker;
+    const gchar *next_marker = FALSE;
     gchar *req_path;
     gboolean res;
    
@@ -178,8 +179,8 @@ static void http_connection_on_directory_listing_data (HttpConnection *con, void
         return;
     }
 
-    // check if we need to get more data
-    if (!strstr (buf, "<IsTruncated>true</IsTruncated>") && !next_marker) {
+        // check if we need to get more data
+    if (!next_marker) {
         LOG_debug (CON_DIR_LOG, "DONE !!");
         
         if (dir_req->directory_listing_callback)
@@ -194,10 +195,10 @@ static void http_connection_on_directory_listing_data (HttpConnection *con, void
         g_free (dir_req);
         return;
     }
-    
+
     // execute HTTP request
-    req_path = g_strdup_printf ("/?delimiter=/&prefix=%s&max-keys=%d&marker=%s&format=xml", 
-        dir_req->dir_path, dir_req->max_keys, next_marker);
+    req_path = g_strdup_printf ("/%s?delimiter=/&prefix=%s&max-keys=%d&marker=%s&format=xml", 
+        application_get_container_name (con->app), dir_req->dir_path, dir_req->max_keys, next_marker);
     
     res = http_connection_make_request_to_storage_url (dir_req->con, 
         req_path, "GET", NULL,
@@ -238,7 +239,6 @@ gboolean http_connection_get_directory_listing (HttpConnection *con, const gchar
     
     // inform that we started to update the directory
     dir_tree_start_update (dir_req->dir_tree, dir_path);
-
     
     //XXX: fix dir_path
     if (!strcmp (dir_path, "/")) {
@@ -250,8 +250,8 @@ gboolean http_connection_get_directory_listing (HttpConnection *con, const gchar
         dir_req->resource_path = g_strdup_printf ("/");
     }
    
-    req_path = g_strdup_printf ("/?delimiter=/&prefix=%s&max-keys=%d&format=xml", 
-        dir_req->dir_path, dir_req->max_keys);
+    req_path = g_strdup_printf ("/%s?delimiter=/&prefix=%s&max-keys=%d&format=xml", 
+        application_get_container_name (con->app), dir_req->dir_path, dir_req->max_keys);
 
     res = http_connection_make_request_to_storage_url (con, 
         req_path, "GET", NULL,

@@ -382,7 +382,7 @@ int main (int argc, char *argv[])
 /*{{{ cmd line args */
 
     // parse command line options
-    context = g_option_context_new ("[http://auth.api.yourcloud.com/v1.0] [container] [options] [mountpoint]");
+    context = g_option_context_new ("[http://auth.api.yourcloud.com/v1.0] [container] [mountpoint]");
     g_option_context_add_main_entries (context, entries, NULL);
     g_option_context_set_description (context, "Please set both HydraFS_USER and HydraFS_PWD environment variables!");
     if (!g_option_context_parse (context, &argc, &argv, &error)) {
@@ -413,7 +413,7 @@ int main (int argc, char *argv[])
         return -1;
     }
 
-    if (g_strv_length (s_params) != 3) {
+    if (!s_params || g_strv_length (s_params) != 3) {
         LOG_err (APP_LOG, "Wrong number of provided arguments!");
         g_fprintf (stdout, "%s\n", g_option_context_get_help (context, TRUE, NULL));
         return -1;
@@ -486,16 +486,22 @@ int main (int argc, char *argv[])
         conf_add_boolean (app->conf, "filesystem.cache_enabled", TRUE);
         conf_add_string (app->conf, "filesystem.cache_dir", "/tmp/hydrafs");
         conf_add_string (app->conf, "filesystem.cache_dir_max_size", "1Gb");
+        conf_add_uint (app->conf, "filesystem.segment_size", 5242880); // 5mb
 
         conf_add_boolean (app->conf, "statistics.enabled", TRUE);
         conf_add_int (app->conf, "statistics.port", 8011);
     } else {
+        LOG_debug (APP_LOG, "Loading configuration file: %s", conf_path);
         if (!conf_parse_file (app->conf, conf_path)) {
             LOG_err (APP_LOG, "Failed to parse configuration file: %s", conf_path);
             return -1;
         }
     }
     g_free (conf_path);
+
+    // add auth data to conf
+    conf_add_string (app->conf, "auth.user", app->auth_user);
+    conf_add_string (app->conf, "auth.key", app->auth_pwd);
 
     // update logging settings
     logger_set_syslog (conf_get_boolean (app->conf, "log.use_syslog"));

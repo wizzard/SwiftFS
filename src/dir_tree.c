@@ -208,7 +208,7 @@ void dir_tree_stop_update (DirTree *dtree, fuse_ino_t parent_ino)
 }
 
 void dir_tree_update_entry (DirTree *dtree, const gchar *path, DirEntryType type, 
-    fuse_ino_t parent_ino, const gchar *entry_name, long long size)
+    fuse_ino_t parent_ino, const gchar *entry_name, long long size, time_t last_modified)
 {
     DirEntry *parent_en;
     DirEntry *en;
@@ -236,7 +236,7 @@ void dir_tree_update_entry (DirTree *dtree, const gchar *path, DirEntryType type
             mode = DIR_DEFAULT_MODE;
             
         dir_tree_add_entry (dtree, entry_name, mode,
-            type, parent_ino, size, time (NULL));
+            type, parent_ino, size, last_modified);
     }
 }
 
