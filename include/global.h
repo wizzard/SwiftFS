@@ -87,6 +87,7 @@ const gchar *application_get_container_name (Application *app);
 const gchar *application_get_full_container_name (Application *app);
 void application_update_full_container_name (Application *app, const gchar *full_container_name);
 ConfData *application_get_conf (Application *app);
+const gchar *application_get_storage_url (Application *app);
 
 ClientPool *application_get_read_client_pool (Application *app);
 ClientPool *application_get_write_client_pool (Application *app);

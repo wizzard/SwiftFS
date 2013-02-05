@@ -37,6 +37,7 @@ struct _Application {
     gchar *container_name;
     gchar *full_container_name;
     struct evhttp_uri *auth_uri;
+    gchar *storage_url; // use this URL instead of the one returned by Auth server
 
     gboolean foreground;
     gchar *mountpoint;
@@ -121,6 +122,11 @@ HfsEncryption *application_get_encryption (Application *app)
 CacheMng *application_get_cache_mng (Application *app)
 {
     return app->cmng;
+}
+
+const gchar *application_get_storage_url (Application *app)
+{
+    return app->storage_url;
 }
 
 /*}}}*/
@@ -363,6 +369,7 @@ int main (int argc, char *argv[])
     gchar *conf_path;
     struct stat st;
 	int r;
+    gchar **storage_url = NULL;
 
     conf_path = g_build_filename (SYSCONFDIR, "hydrafs.conf", NULL); 
     g_snprintf (conf_str, sizeof (conf_str), "Path to configuration file. Default: %s", conf_path);
@@ -371,6 +378,7 @@ int main (int argc, char *argv[])
 	    { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY, &s_params, NULL, NULL },
 	    { "config", 'c', 0, G_OPTION_ARG_FILENAME_ARRAY, &s_config, conf_str, NULL},
         { "foreground", 'f', 0, G_OPTION_ARG_NONE, &foreground, "Flag. Do not daemonize process.", NULL },
+        { "storage_url", 's', 0, G_OPTION_ARG_STRING_ARRAY, &storage_url, "Set storage URL (Storage URL returned by Auth server will be ignored).", NULL },
         { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose, "Verbose output.", NULL },
         { "version", 0, 0, G_OPTION_ARG_NONE, &version, "Show application version and exit.", NULL },
         { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
@@ -421,6 +429,11 @@ int main (int argc, char *argv[])
         return FALSE;
     }
 
+    if (verbose)
+        log_level = LOG_debug;
+    else
+        log_level = LOG_msg;
+
     // check if --version is specified
     if (version) {
             g_fprintf (stdout, "HydraFS File System v%s\n", VERSION);
@@ -456,6 +469,13 @@ int main (int argc, char *argv[])
         g_fprintf (stdout, "%s\n", g_option_context_get_help (context, TRUE, NULL));
         return -1;
     }
+
+    if (storage_url && g_strv_length (storage_url) > 0) {
+        app->storage_url = g_strdup (storage_url[0]);
+        LOG_msg (APP_LOG, "Using StorageURL: %s", app->storage_url);
+        g_strfreev (storage_url);
+    }
+
     app->container_name = g_strdup (s_params[1]);
     
     app->mountpoint = g_strdup (s_params[2]);
@@ -477,10 +497,6 @@ int main (int argc, char *argv[])
 
     app->foreground = foreground;
 
-    if (verbose)
-        log_level = LOG_debug;
-    else
-        log_level = LOG_msg;
     
     g_option_context_free (context);
 /*}}}*/

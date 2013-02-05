@@ -222,7 +222,11 @@ static void auth_client_on_response_cb (struct evhttp_request *req, void *ctx)
         goto done;
     }
 
-    storage_url = evhttp_find_header (headers, "X-Storage-Url");
+    // use user-specified StorageURL
+    storage_url = application_get_storage_url (auth_client->app);
+    if (!storage_url)
+        storage_url = evhttp_find_header (headers, "X-Storage-Url");
+
     auth_token = evhttp_find_header (headers, "X-Auth-Token");
 
     // make sure we got all headers' values
