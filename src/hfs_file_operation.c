@@ -24,6 +24,8 @@ struct _HfsFileOp {
 #define FOP_LOG "fop"
 #define SEGMENTS_DIR "segments"
 
+/*{{{ create / destroy */
+
 HfsFileOp *hfs_fileop_create (Application *app, const gchar *fname)
 {
     HfsFileOp *fop;
@@ -47,6 +49,7 @@ void hfs_fileop_destroy (HfsFileOp *fop)
     g_free (fop->fname);
     g_free (fop);
 }
+/*}}}*/
 
 /*{{{ hfs_fileop_release*/
 
@@ -163,39 +166,102 @@ void hfs_fileop_release (HfsFileOp *fop)
 
 /*{{{ hfs_fileop_write_buffer */
 
+typedef struct {
+    HfsFileOp *fop;
+    HfsFileOp_on_buffer_written_cb on_buffer_written_cb;
+    size_t buf_size;
+    gpointer ctx;
+} FileOpWriteData;
+
+static void hfs_fileop_write_on_http_client_cb (gpointer client, gpointer ctx);
+
+// segment buffer is sent, check if there is more data left in segment buffer
+static void hfs_fileop_write_on_sent_cb (HttpConnection *con, void *ctx, 
+    const gchar *buf, size_t buf_len, 
+    struct evkeyvalq *headers, gboolean success)
+{
+    FileOpWriteData *write_data = (FileOpWriteData *) ctx;
+    HfsFileOp *fop = NULL;
+    
+    // release HttpConnection
+    http_connection_release (con);
+
+    if (!success) {
+        LOG_err (FOP_LOG, "Failed to upload segment !");
+
+        write_data->on_buffer_written_cb (write_data->fop, write_data->ctx, FALSE, 0);
+        g_free (write_data);
+        return;
+    }
+
+    fop = write_data->fop;
+
+    // check if we need to flush segment buffer
+    if (evbuffer_get_length (fop->segment_buf) >= conf_get_uint (fop->conf, "filesystem.segment_size")) {
+
+        // get HTTP connection to upload segment (for small file) or manifest (for large file)
+        if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_write_on_http_client_cb, write_data)) {
+            LOG_err (FOP_LOG, "Failed to get HTTP client !");
+            return;
+        }
+    
+    // ok, we are done
+    } else {
+        // data is added to the current segment buffer
+        write_data->on_buffer_written_cb (write_data->fop, write_data->ctx, TRUE, write_data->buf_size);
+        g_free (write_data);
+    }
+
+}
+
 // got HTTPConnection object
 // send "segment"
-static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
+static void hfs_fileop_write_on_http_client_cb (gpointer client, gpointer ctx)
 {
     HttpConnection *con = (HttpConnection *) client;
-    HfsFileOp *fop = (HfsFileOp *) ctx;
+    FileOpWriteData *write_data = (FileOpWriteData *) ctx;
+    HfsFileOp *fop = NULL;
     gchar *req_path = NULL;
     gboolean res;
+    struct evbuffer *seg;
+    unsigned char *buf;
 
     http_connection_acquire (con);
+
+    fop = write_data->fop;
 
     // send segment buffer
     req_path = g_strdup_printf ("/%s/%s%s/%zu", application_get_container_name (con->app), 
         fop->fname, SEGMENTS_DIR, fop->segment_count);
 
     fop->segment_count ++;
+    
+    // get segment_size from the segment buffer
+    buf = evbuffer_pullup (fop->segment_buf, -1);
+    seg = evbuffer_new ();
+    evbuffer_add_reference (seg, 
+        buf, conf_get_uint (fop->conf, "filesystem.segment_size"),
+        NULL, NULL
+    );
 
     // XXX: encryption
 
     res = http_connection_make_request_to_storage_url (con, 
-        req_path, "PUT", fop->segment_buf,
-        hfs_fileop_release_on_sent_cb,
-        fop
+        req_path, "PUT", seg,
+        hfs_fileop_write_on_sent_cb,
+        write_data
     );
+    evbuffer_free (seg);
 
-    // drain buffer
-    evbuffer_drain (fop->segment_buf, -1);
+    // remove segment_size bytes from segment buffer
+    evbuffer_drain (fop->segment_buf, conf_get_uint (fop->conf, "filesystem.segment_size"));
     
     g_free (req_path);
 
     if (!res) {
         LOG_err (FOP_LOG, "Failed to create HTTP request !");
         http_connection_release (con);
+        g_free (write_data);
         return;
     }
 }
@@ -207,6 +273,7 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
     const char *buf, size_t buf_size, off_t off,
     HfsFileOp_on_buffer_written_cb on_buffer_written_cb, gpointer ctx)
 {
+
     // XXX: allow only sequentially write
     // current written bytes should be always match offset
     if (fop->current_size != off) {
@@ -222,9 +289,16 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
     
     // check if we need to flush segment buffer
     if (evbuffer_get_length (fop->segment_buf) >= conf_get_uint (fop->conf, "filesystem.segment_size")) {
+        FileOpWriteData *write_data;
         
+        write_data = g_new0 (FileOpWriteData, 1);
+        write_data->fop = fop;
+        write_data->on_buffer_written_cb = on_buffer_written_cb;
+        write_data->ctx = ctx;
+        write_data->buf_size = buf_size;
+
         // get HTTP connection to upload segment (for small file) or manifest (for large file)
-        if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_write_on_http_client_cb, fop)) {
+        if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_write_on_http_client_cb, write_data)) {
             LOG_err (FOP_LOG, "Failed to get HTTP client !");
             return;
         }
