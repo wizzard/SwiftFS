@@ -16,12 +16,12 @@ void hfs_fileop_release (HfsFileOp *fop);
 
 typedef void (*HfsFileOp_on_buffer_written_cb) (HfsFileOp *fop, gpointer ctx, gboolean success, size_t count);
 void hfs_fileop_write_buffer (HfsFileOp *fop,
-    const char *buf, size_t buf_size, off_t off,
+    const char *buf, size_t buf_size, off_t off, fuse_ino_t ino,
     HfsFileOp_on_buffer_written_cb on_buffer_written_cb, gpointer ctx);
 
 typedef void (*HfsFileOp_on_buffer_read_cb) (gpointer ctx, gboolean success, char *buf, size_t size);
 void hfs_fileop_read_buffer (HfsFileOp *fop,
-    size_t size, off_t off,
+    size_t size, off_t off, fuse_ino_t ino,
     HfsFileOp_on_buffer_read_cb on_buffer_read_cb, gpointer ctx);
 
 #endif

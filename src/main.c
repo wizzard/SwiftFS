@@ -10,6 +10,7 @@
 #include "http_client.h"
 #include "auth_client.h"
 #include "hfs_encryption.h"
+#include "cache_mng.h"
 
 #define APP_LOG "main"
 
@@ -501,9 +502,11 @@ int main (int argc, char *argv[])
 
         conf_add_uint (app->conf, "filesystem.dir_cache_max_time", 5);
         conf_add_boolean (app->conf, "filesystem.cache_enabled", TRUE);
+        conf_add_boolean (app->conf, "filesystem.md5_enabled", FALSE);
         conf_add_string (app->conf, "filesystem.cache_dir", "/tmp/hydrafs");
         conf_add_string (app->conf, "filesystem.cache_dir_max_size", "1Gb");
         conf_add_uint (app->conf, "filesystem.segment_size", 5242880); // 5mb
+        conf_add_uint (app->conf, "filesystem.cache_object_ttl", 600); // 10 min
 
         conf_add_boolean (app->conf, "encryption.enabled", FALSE);
         conf_add_string (app->conf, "encryption.key_file", "");

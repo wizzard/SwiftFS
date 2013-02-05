@@ -8,6 +8,7 @@
 #include "http_client.h"
 #include "client_pool.h"
 #include "hfs_file_operation.h"
+#include "cache_mng.h"
 
 /*{{{ struct / defines*/
 
@@ -569,6 +570,8 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
         return;
     }
 
+    LOG_debug (DIR_TREE_LOG, "segmented: %d  updating: %d", en->is_segmented, en->is_updating);
+
     // get extra info for segmented file
     if (en->is_segmented && !en->is_updating) {
         LookupOpData *op_data;
@@ -623,17 +626,9 @@ static void dir_tree_getattr_on_attr_cb (HttpConnection *con, void *ctx,
     const unsigned char *size_header;
     DirEntry  *en;
     
-    LOG_debug (DIR_TREE_LOG, "Got attributes for ino: %"INO_FMT, op_data->ino);
 
     // release HttpConnection
     http_connection_release (con);
-
-    if (!success) {
-        LOG_err (DIR_TREE_LOG, "Failed to get entry (%"INO_FMT") attributes !", op_data->ino);
-        op_data->getattr_cb (op_data->req, FALSE, 0, 0, 0, 0);
-        g_free (op_data);
-        return;
-    }
 
     en = g_hash_table_lookup (op_data->dtree->h_inodes, GUINT_TO_POINTER (op_data->ino));
     
@@ -641,6 +636,14 @@ static void dir_tree_getattr_on_attr_cb (HttpConnection *con, void *ctx,
     if (!en) {
         LOG_err (DIR_TREE_LOG, "Entry (%"INO_FMT") not found !", op_data->ino);
         op_data->getattr_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data);
+        return;
+    }
+
+    if (!success) {
+        LOG_err (DIR_TREE_LOG, "Failed to get entry (%"INO_FMT") attributes !", op_data->ino);
+        op_data->getattr_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        en->is_updating = FALSE;
         g_free (op_data);
         return;
     }
@@ -659,6 +662,9 @@ static void dir_tree_getattr_on_attr_cb (HttpConnection *con, void *ctx,
         en->size = strtoll ((char *)size_header, NULL, 10);
     }
     
+    LOG_debug (DIR_TREE_LOG, "Got attributes for ino: %"INO_FMT" size: %zu", op_data->ino, en->size);
+    
+    en->is_updating = FALSE;
     op_data->getattr_cb (op_data->req, TRUE, en->ino, en->mode, en->size, en->ctime);
     g_free (op_data);
 }
@@ -701,6 +707,7 @@ static void dir_tree_getattr_on_con_cb (gpointer client, gpointer ctx)
         LOG_err (DIR_TREE_LOG, "Failed to create HTTP request !");
         http_connection_release (con);
         op_data->getattr_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        en->is_updating = FALSE;
         g_free (op_data);
         return;
     }
@@ -875,6 +882,8 @@ static void dir_tree_on_buffer_read_cb (gpointer ctx, gboolean success, char *bu
 {
     FileReadOpData *op_data = (FileReadOpData *)ctx;
 
+    LOG_err (DIR_TREE_LOG, "READ_cb !");
+
     if (!success) {
         LOG_err (DIR_TREE_LOG, "Failed to read file !");
         op_data->file_read_cb (op_data->req, FALSE, NULL, 0);
@@ -915,7 +924,7 @@ void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino,
     op_data->file_read_cb = file_read_cb;
     op_data->req = req;
 
-    hfs_fileop_read_buffer (fop, size, off, dir_tree_on_buffer_read_cb, op_data);
+    hfs_fileop_read_buffer (fop, size, off, ino, dir_tree_on_buffer_read_cb, op_data);
 
 }
 /*}}}*/
@@ -967,7 +976,7 @@ void dir_tree_file_write (DirTree *dtree, fuse_ino_t ino,
     op_data->file_write_cb = file_write_cb;
     op_data->req = req;
 
-    hfs_fileop_write_buffer (fop, buf, size, off, dir_tree_on_buffer_written_cb, op_data);
+    hfs_fileop_write_buffer (fop, buf, size, off, ino, dir_tree_on_buffer_written_cb, op_data);
 }
 /*}}}*/
 
@@ -1060,6 +1069,9 @@ void dir_tree_file_remove (DirTree *dtree, fuse_ino_t ino, DirTree_file_remove_c
         file_remove_cb (req, FALSE);
         return;
     }
+
+    // XXX: not sure if the best place
+    cache_mng_remove_file_data (application_get_cache_mng (dtree->app), ino);
 
     data = g_new0 (FileRemoveData, 1);
     data->dtree = dtree;
@@ -1161,7 +1173,7 @@ static void dir_tree_dir_remove_on_con_objects_cb (HttpConnection *con, gpointer
     evbuffer_add (evb, buf, buf_len);
 
     data->q_objects_to_remove = g_queue_new ();
-    while (line = evbuffer_readln (evb, NULL, EVBUFFER_EOL_CRLF)) {
+    while ((line = evbuffer_readln (evb, NULL, EVBUFFER_EOL_CRLF))) {
         LOG_debug (DIR_TREE_LOG, "Removing %s", line);
         g_queue_push_head (data->q_objects_to_remove, line);
     }

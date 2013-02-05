@@ -12,4 +12,7 @@ void cache_mng_destroy (CacheMng *cmng);
 
 unsigned char *cache_mng_retr_file_data (CacheMng *cmng, fuse_ino_t ino, size_t size, off_t off);
 void cache_mng_store_file_data (CacheMng *cmng, fuse_ino_t ino, size_t size, off_t off, unsigned char *buf);
+
+void cache_mng_remove_file_data (CacheMng *cmng, fuse_ino_t ino);
+
 #endif
