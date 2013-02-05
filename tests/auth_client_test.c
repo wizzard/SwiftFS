@@ -39,6 +39,12 @@ ConfData *application_get_conf (Application *app)
 {
     return app->conf;
 }
+
+const gchar *application_get_storage_url (Application *app)
+{
+    return NULL;
+}
+
 /*}}}*/
 
 gboolean check_list (GList *l)

@@ -419,6 +419,12 @@ static gboolean print_foreach (gconstpointer a, gconstpointer b)
     g_printf ("%p: %i\n", a, GPOINTER_TO_INT (b));
     return FALSE;
 }
+
+const gchar *application_get_storage_url (Application *app)
+{
+    return NULL;
+}
+
 /*}}}*/
 
 int main (int argc, char *argv[])

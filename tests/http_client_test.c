@@ -73,6 +73,12 @@ AuthClient *application_get_auth_client (Application *app)
     return app->auth_client;
 }
 
+const gchar *application_get_storage_url (Application *app)
+{
+    return NULL;
+}
+
+
 
 static void on_output_timer (evutil_socket_t fd, short event, void *ctx)
 {

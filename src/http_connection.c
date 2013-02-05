@@ -192,7 +192,6 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
     const char *buf;
     size_t buf_len;
 
-    LOG_debug (CON_LOG, "Got HTTP response from server !");
 
     if (!req) {
         LOG_err (CON_LOG, "Request failed !");
@@ -200,6 +199,8 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
             data->response_cb (data->con, data->ctx, NULL, 0, NULL, FALSE);
         goto done;
     }
+    
+    LOG_debug (CON_LOG, "Got HTTP response from server: %d %s", evhttp_request_get_response_code (req), req->response_code_line);
 
     // XXX: handle redirect
     // 200 (Ok), 201 (Created), 202 (Accepted), 204 (No Content) are ok
@@ -336,7 +337,7 @@ gboolean http_connection_make_request_ (HttpConnection *con,
         evbuffer_add_buffer (req->output_buffer, out_buffer);
     }
 
-    LOG_msg (CON_LOG, "[%p] New request: %s", con, url);
+    LOG_msg (CON_LOG, "[%p] New request: %s %s buf: %zu", con, http_cmd, url, evbuffer_get_length (req->output_buffer));
     
     if (evhttp_uri_get_query (uri))
         req_uri = g_strdup_printf ("%s?%s", evhttp_uri_get_path (uri), evhttp_uri_get_query (uri));

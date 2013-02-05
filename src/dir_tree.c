@@ -1231,14 +1231,16 @@ void dir_tree_dir_remove (DirTree *dtree, fuse_ino_t parent_ino, const char *nam
     parent_en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (parent_ino));
     if (!parent_en || parent_en->type != DET_dir) {
         LOG_err (DIR_TREE_LOG, "Entry (ino = %"INO_FMT") not found !", parent_ino);
-        dir_remove_cb (req, FALSE);
+        if (dir_remove_cb)
+            dir_remove_cb (req, FALSE);
         return;
     }
 
     en = g_hash_table_lookup (parent_en->h_dir_tree, name);
     if (!en) {
         LOG_debug (DIR_TREE_LOG, "Entry '%s' not found !", name);
-        dir_remove_cb (req, FALSE);
+        if (dir_remove_cb)
+            dir_remove_cb (req, FALSE);
         return;
     }
     
