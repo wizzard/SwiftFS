@@ -559,12 +559,22 @@ int main (int argc, char *argv[])
     }
 
     // create ClientPool for reading operations
+    /*
     app->read_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.readers"),
         http_client_create,
         http_client_destroy,
         http_client_set_on_released_cb,
         http_client_check_rediness
         );
+    */
+    app->read_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.readers"),
+        http_connection_create,
+        http_connection_destroy,
+        http_connection_set_on_released_cb,
+        http_connection_check_rediness
+        );
+
+
     if (!app->read_client_pool) {
         LOG_err (APP_LOG, "Failed to create ClientPool !");
         event_base_loopexit (app->evbase, NULL);

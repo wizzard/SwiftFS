@@ -36,6 +36,7 @@ typedef struct {
 
     HfsFileOp *fop; // file operation object
     gboolean is_segmented; // TRUE if file contains of segments
+    gboolean is_updating; // TRUE if getting attributes
 } DirEntry;
 
 struct _DirTree {
@@ -155,6 +156,7 @@ static DirEntry *dir_tree_add_entry (DirTree *dtree, const gchar *basename, mode
     en = g_new0 (DirEntry, 1);
     en->fop = NULL;
     en->is_segmented = FALSE;
+    en->is_updating = FALSE;
     en->fullpath = fullpath;
     en->ino = dtree->max_ino++;
     en->age = dtree->current_age;
@@ -317,7 +319,7 @@ typedef struct {
     DirEntry *en;
 } DirTreeFillDirData;
 
-// callback: 
+// callback: directory structure
 void dir_tree_fill_on_dir_buf_cb (gpointer callback_data, gboolean success)
 {
     DirTreeFillDirData *dir_fill_data = (DirTreeFillDirData *) callback_data;
@@ -434,13 +436,115 @@ void dir_tree_fill_dir_buf (DirTree *dtree,
 /*}}}*/
 
 /*{{{ dir_tree_lookup */
+
+typedef struct {
+    DirTree *dtree;
+    dir_tree_lookup_cb lookup_cb;
+    fuse_req_t req;
+    fuse_ino_t ino;
+} LookupOpData;
+
+static void dir_tree_lookup_on_attr_cb (HttpConnection *con, void *ctx, 
+    const gchar *buf, size_t buf_len, 
+    struct evkeyvalq *headers, gboolean success)
+{
+    LookupOpData *op_data = (LookupOpData *) ctx;
+    const unsigned char *size_header;
+    DirEntry  *en;
+    
+    LOG_debug (DIR_TREE_LOG, "Got attributes for ino: %"INO_FMT, op_data->ino);
+
+    // release HttpConnection
+    http_connection_release (con);
+
+
+    en = g_hash_table_lookup (op_data->dtree->h_inodes, GUINT_TO_POINTER (op_data->ino));
+    
+    // entry not found
+    if (!en) {
+        LOG_err (DIR_TREE_LOG, "Entry (%"INO_FMT") not found !", op_data->ino);
+        op_data->lookup_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data);
+        return;
+    }
+
+    if (!success) {
+        LOG_err (DIR_TREE_LOG, "Failed to get entry (%"INO_FMT") attributes !", op_data->ino);
+        op_data->lookup_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data);
+        en->is_updating = FALSE;
+        return;
+    }
+
+    // get X-Object-Meta-Size header
+    size_header = evhttp_find_header (headers, "X-Object-Meta-Size");
+    if (size_header) {
+        //XXX: CacheMng
+        en->size = strtoll ((char *)size_header, NULL, 10);
+    }
+
+    // get X-Container-Bytes-Used header
+    size_header = evhttp_find_header (headers, "X-Container-Bytes-Used");
+    if (size_header) {
+        //XXX: CacheMng
+        en->size = strtoll ((char *)size_header, NULL, 10);
+    }
+    
+    op_data->lookup_cb (op_data->req, TRUE, en->ino, en->mode, en->size, en->ctime);
+    en->is_updating = FALSE;
+    g_free (op_data);
+}
+
+//send HTTP HEAD request
+static void dir_tree_lookup_on_con_cb (gpointer client, gpointer ctx)
+{
+    HttpConnection *con = (HttpConnection *) client;
+    LookupOpData *op_data = (LookupOpData *) ctx;
+    gchar *req_path = NULL;
+    gboolean res;
+    DirEntry  *en;
+
+    en = g_hash_table_lookup (op_data->dtree->h_inodes, GUINT_TO_POINTER (op_data->ino));
+    
+    // entry not found
+    if (!en) {
+        LOG_err (DIR_TREE_LOG, "Entry (%"INO_FMT") not found !", op_data->ino);
+        op_data->lookup_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data);
+        return;
+    }
+
+    http_connection_acquire (con);
+
+    // send segment buffer
+    req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app),
+        en->fullpath);
+
+    res = http_connection_make_request_to_storage_url (con, 
+        req_path, "HEAD", NULL,
+        dir_tree_lookup_on_attr_cb,
+        op_data
+    );
+
+    g_free (req_path);
+
+    if (!res) {
+        LOG_err (DIR_TREE_LOG, "Failed to create HTTP request !");
+        http_connection_release (con);
+        op_data->lookup_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        en->is_updating = FALSE;
+        g_free (op_data);
+        return;
+    }
+}
+
 // lookup entry and return attributes
 void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
     dir_tree_lookup_cb lookup_cb, fuse_req_t req)
 {
     DirEntry *dir_en, *en;
     
-    LOG_debug (DIR_TREE_LOG, "Looking up for '%s' in directory ino: %d", name, parent_ino);
+    LOG_err (DIR_TREE_LOG, "Looking up for '%s' in directory ino: %d", name, parent_ino);
     
     dir_en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (parent_ino));
     
@@ -453,7 +557,7 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
 
     en = g_hash_table_lookup (dir_en->h_dir_tree, name);
     if (!en) {
-        LOG_debug (DIR_TREE_LOG, "Entry '%s' not found !", name);
+        LOG_err (DIR_TREE_LOG, "Entry '%s' not found !", name);
         lookup_cb (req, FALSE, 0, 0, 0, 0);
         return;
     }
@@ -464,7 +568,33 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
         lookup_cb (req, FALSE, 0, 0, 0, 0);
         return;
     }
-    
+
+    // get extra info for segmented file
+    if (en->is_segmented && !en->is_updating) {
+        LookupOpData *op_data;
+
+        //XXX: CacheMng !
+
+        op_data = g_new0 (LookupOpData, 1);
+        op_data->dtree = dtree;
+        op_data->lookup_cb = lookup_cb;
+        op_data->req = req;
+        op_data->ino = en->ino;
+
+        en->is_updating = TRUE;
+
+        LOG_debug (DIR_TREE_LOG, "Requesting for attributes, ino: %"INO_FMT, en->ino);
+
+        if (!client_pool_get_client (application_get_ops_client_pool (dtree->app), dir_tree_lookup_on_con_cb, op_data)) {
+            LOG_err (DIR_TREE_LOG, "Failed to get HTTP client !");
+            lookup_cb (req, FALSE, 0, 0, 0, 0);
+            en->is_updating = FALSE;
+            g_free (op_data);
+        }
+
+        return;
+    }
+
     // hide it
     if (en->is_modified) {
         LOG_debug (DIR_TREE_LOG, "Entry '%s' is modified !", name);
@@ -477,13 +607,112 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
 /*}}}*/
 
 /*{{{ dir_tree_getattr */
+
+typedef struct {
+    DirTree *dtree;
+    dir_tree_getattr_cb getattr_cb;
+    fuse_req_t req;
+    fuse_ino_t ino;
+} GetAttrOpData;
+
+static void dir_tree_getattr_on_attr_cb (HttpConnection *con, void *ctx, 
+    const gchar *buf, size_t buf_len, 
+    struct evkeyvalq *headers, gboolean success)
+{
+    GetAttrOpData *op_data = (GetAttrOpData *) ctx;
+    const unsigned char *size_header;
+    DirEntry  *en;
+    
+    LOG_debug (DIR_TREE_LOG, "Got attributes for ino: %"INO_FMT, op_data->ino);
+
+    // release HttpConnection
+    http_connection_release (con);
+
+    if (!success) {
+        LOG_err (DIR_TREE_LOG, "Failed to get entry (%"INO_FMT") attributes !", op_data->ino);
+        op_data->getattr_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data);
+        return;
+    }
+
+    en = g_hash_table_lookup (op_data->dtree->h_inodes, GUINT_TO_POINTER (op_data->ino));
+    
+    // entry not found
+    if (!en) {
+        LOG_err (DIR_TREE_LOG, "Entry (%"INO_FMT") not found !", op_data->ino);
+        op_data->getattr_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data);
+        return;
+    }
+
+    // get X-Object-Meta-Size header
+    size_header = evhttp_find_header (headers, "X-Object-Meta-Size");
+    if (size_header) {
+        //XXX: CacheMng
+        en->size = strtoll ((char *)size_header, NULL, 10);
+    }
+
+    // get X-Container-Bytes-Used header
+    size_header = evhttp_find_header (headers, "X-Container-Bytes-Used");
+    if (size_header) {
+        //XXX: CacheMng
+        en->size = strtoll ((char *)size_header, NULL, 10);
+    }
+    
+    op_data->getattr_cb (op_data->req, TRUE, en->ino, en->mode, en->size, en->ctime);
+    g_free (op_data);
+}
+
+
+//send HTTP HEAD request
+static void dir_tree_getattr_on_con_cb (gpointer client, gpointer ctx)
+{
+    HttpConnection *con = (HttpConnection *) client;
+    GetAttrOpData *op_data = (GetAttrOpData *) ctx;
+    gchar *req_path = NULL;
+    gboolean res;
+    DirEntry  *en;
+
+    en = g_hash_table_lookup (op_data->dtree->h_inodes, GUINT_TO_POINTER (op_data->ino));
+    
+    // entry not found
+    if (!en) {
+        LOG_err (DIR_TREE_LOG, "Entry (%"INO_FMT") not found !", op_data->ino);
+        op_data->getattr_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data);
+        return;
+    }
+
+    http_connection_acquire (con);
+
+    // send segment buffer
+    req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app),
+        en->fullpath);
+
+    res = http_connection_make_request_to_storage_url (con, 
+        req_path, "HEAD", NULL,
+        dir_tree_getattr_on_attr_cb,
+        op_data
+    );
+
+    g_free (req_path);
+
+    if (!res) {
+        LOG_err (DIR_TREE_LOG, "Failed to create HTTP request !");
+        http_connection_release (con);
+        op_data->getattr_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data);
+        return;
+    }
+}
+
 // return entry attributes
 void dir_tree_getattr (DirTree *dtree, fuse_ino_t ino, 
     dir_tree_getattr_cb getattr_cb, fuse_req_t req)
 {
     DirEntry  *en;
     
-    LOG_debug (DIR_TREE_LOG, "Getting attributes for %d", ino);
+    LOG_err (DIR_TREE_LOG, "Getting attributes for %d", ino);
     
     en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (ino));
     
@@ -491,6 +720,29 @@ void dir_tree_getattr (DirTree *dtree, fuse_ino_t ino,
     if (!en) {
         LOG_msg (DIR_TREE_LOG, "Entry (%d) not found !", ino);
         getattr_cb (req, FALSE, 0, 0, 0, 0);
+        return;
+    }
+
+    // get extra info for segmented file
+    if (en->is_segmented && !en->is_updating) {
+        GetAttrOpData *op_data;
+
+        //XXX: CacheMng !
+
+        op_data = g_new0 (GetAttrOpData, 1);
+        op_data->dtree = dtree;
+        op_data->getattr_cb = getattr_cb;
+        op_data->req = req;
+        op_data->ino = ino;
+
+        en->is_updating = TRUE;
+
+        if (!client_pool_get_client (application_get_ops_client_pool (dtree->app), dir_tree_getattr_on_con_cb, op_data)) {
+            LOG_err (DIR_TREE_LOG, "Failed to get HTTP client !");
+            getattr_cb (req, FALSE, 0, 0, 0, 0);
+            g_free (op_data);
+        }
+
         return;
     }
 
