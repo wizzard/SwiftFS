@@ -98,7 +98,17 @@ void auth_client_get_data (AuthClient *auth_client, gboolean force, AuthClient_o
         SSL *ssl;
 
 		ssl_ctx = SSL_CTX_new (SSLv23_method());
+        if (!ssl_ctx) {
+            LOG_err (AUTH_LOG, "Failed to create SSL_CTX !");
+            on_data (ctx, FALSE, NULL, NULL);
+            return;
+        }
 		ssl = SSL_new (ssl_ctx);
+        if (!ssl) {
+            LOG_err (AUTH_LOG, "Failed to create ssl object !");
+            on_data (ctx, FALSE, NULL, NULL);
+            return;
+        }
 
 		auth_client->bev = bufferevent_openssl_socket_new (
             application_get_evbase (auth_client->app), 

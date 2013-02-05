@@ -362,6 +362,7 @@ int main (int argc, char *argv[])
     gchar conf_str[1023];
     gchar *conf_path;
     struct stat st;
+	int r;
 
     conf_path = g_build_filename (SYSCONFDIR, "hydrafs.conf", NULL); 
     g_snprintf (conf_str, sizeof (conf_str), "Path to configuration file. Default: %s", conf_path);
@@ -375,9 +376,21 @@ int main (int argc, char *argv[])
         { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
     };
 
+    SSL_library_init();
+    ERR_load_crypto_strings();
+    SSL_load_error_strings();
+    OpenSSL_add_all_algorithms();
+    r = RAND_poll ();
+    if (r == 0) {
+        fprintf(stderr, "RAND_poll() failed.\n");
+        return 1;
+    }
+
     // init libraries
     ENGINE_load_builtin_engines ();
     ENGINE_register_all_complete ();
+
+    g_random_set_seed (time (NULL));
 
     progname = argv[0];
 
