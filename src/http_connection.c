@@ -285,7 +285,7 @@ gboolean http_connection_make_request_ (HttpConnection *con,
     }
 
     // XXX: we need to update application container path
-    application_update_full_container_name (con->app, evhttp_uri_get_path (uri));
+    // application_update_full_container_name (con->app, evhttp_uri_get_path (uri));
     
     data = g_new0 (RequestData, 1);
     data->response_cb = response_cb;

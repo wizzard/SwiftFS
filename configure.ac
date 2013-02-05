@@ -1,4 +1,4 @@
-AC_INIT([hydrafs], [0.1])
+AC_INIT([hydrafs], [0.2])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CANONICAL_TARGET
 AM_INIT_AUTOMAKE 
