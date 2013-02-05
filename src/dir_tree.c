@@ -35,6 +35,7 @@ typedef struct {
     GHashTable *h_dir_tree; // name -> data
 
     HfsFileOp *fop; // file operation object
+    gboolean is_segmented; // TRUE if file contains of segments
 } DirEntry;
 
 struct _DirTree {
@@ -115,9 +116,8 @@ static DirEntry *dir_tree_add_entry (DirTree *dtree, const gchar *basename, mode
 {
     DirEntry *en;
     DirEntry *parent_en = NULL;
+    gchar *fullpath = NULL;
     
-    en = g_new0 (DirEntry, 1);
-    en->fop = NULL;
 
     // get the parent, for inodes > 0
     if (parent_ino) {
@@ -126,18 +126,36 @@ static DirEntry *dir_tree_add_entry (DirTree *dtree, const gchar *basename, mode
             LOG_err (DIR_TREE_LOG, "Parent not found for ino: %llu !", parent_ino);
             return NULL;
         }
+    }
 
+    // check for segment directory
+    if (parent_en) {
+        // check if parent already contains file with the same name.
+        en = g_hash_table_lookup (parent_en->h_dir_tree, basename);
+        if (en && en->type != type) {
+            LOG_debug (DIR_TREE_LOG, "Parent already contains file %s! Assuming segmentations!", basename);
+            en->is_segmented = TRUE;
+            return NULL;
+        }
+    }
+
+    // get fullname
+    if (parent_ino) {
         // update directory buffer
         dir_tree_entry_modified (dtree, parent_en);
 
         if (parent_ino == FUSE_ROOT_ID)
-            en->fullpath = g_strdup_printf ("/%s", basename);
+            fullpath = g_strdup_printf ("%s", basename);
         else
-            en->fullpath = g_strdup_printf ("%s/%s", parent_en->fullpath, basename);
+            fullpath = g_strdup_printf ("%s/%s", parent_en->fullpath, basename);
     } else {
-        en->fullpath = g_strdup ("/");
+        fullpath = g_strdup ("");
     }
 
+    en = g_new0 (DirEntry, 1);
+    en->fop = NULL;
+    en->is_segmented = FALSE;
+    en->fullpath = fullpath;
     en->ino = dtree->max_ino++;
     en->age = dtree->current_age;
     en->basename = g_strdup (basename);
@@ -238,6 +256,10 @@ void dir_tree_update_entry (DirTree *dtree, const gchar *path, DirEntryType type
     if (en) {
         en->age = dtree->current_age;
         en->size = size;
+        if (en->type != type) {
+            LOG_debug (DIR_TREE_LOG, "Enabling segmentation for: %s", entry_name);
+            en->is_segmented = TRUE;
+        }
     } else {
         mode_t mode;
 
@@ -591,6 +613,12 @@ void dir_tree_file_release (DirTree *dtree, fuse_ino_t ino, struct fuse_file_inf
 /*}}}*/
 
 /*{{{ dir_tree_file_read */
+
+typedef struct {
+    DirTree_file_read_cb file_read_cb;
+    fuse_req_t req;
+} FileReadOpData;
+
 void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino, 
     size_t size, off_t off,
     DirTree_file_read_cb file_read_cb, fuse_req_t req,
@@ -599,6 +627,7 @@ void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino,
     DirEntry *en;
     char full_name[1024];
     HfsFileOp *fop;
+    FileReadOpData *op_data;
     
     en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (ino));
 
@@ -614,6 +643,12 @@ void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino,
 
     LOG_debug (DIR_TREE_LOG, "[fop: %p] read inode %"INO_FMT", size: %zd, off: %"OFF_FMT, fop, ino, size, off);
     
+    op_data = g_new0 (FileReadOpData, 1);
+    op_data->file_read_cb = file_read_cb;
+    op_data->req = req;
+
+    hfs_fileop_read_buffer (fop, buf, size, off, dir_tree_on_buffer_read_cb, op_data);
+
 }
 /*}}}*/
 
@@ -670,6 +705,8 @@ void dir_tree_file_write (DirTree *dtree, fuse_ino_t ino,
 
 /*{{{ dir_tree_file_remove */
 
+//XXX: remove segments !!!
+
 typedef struct {
     DirTree *dtree;
     DirEntry *en;
@@ -679,7 +716,7 @@ typedef struct {
 } FileRemoveData;
 
 // file is removed
-static void dir_tree_file_remove_on_http_client_data_cb (HttpConnection *con, gpointer ctx, 
+static void dir_tree_file_remove_on_con_data_cb (HttpConnection *con, gpointer ctx, 
         const gchar *buf, size_t buf_len, G_GNUC_UNUSED struct evkeyvalq *headers, gboolean success)
 {
     FileRemoveData *data = (FileRemoveData *) ctx;
@@ -687,15 +724,22 @@ static void dir_tree_file_remove_on_http_client_data_cb (HttpConnection *con, gp
     data->en->age = 0;
     dir_tree_entry_modified (data->dtree, data->en);
 
-    data->file_remove_cb (data->req, success);
+    if (data->file_remove_cb)
+        data->file_remove_cb (data->req, success);
 
-    g_free (data);
     
     http_connection_release (con);
+
+    // check if it's required remove directory
+    if (data->en->is_segmented) {
+        dir_tree_dir_remove (data->dtree, data->en->parent_ino, data->en->basename, NULL, NULL);
+    }
+    
+    g_free (data);
 }
 
 // HTTP client is ready for a new request
-static void dir_tree_file_remove_on_http_client_cb (gpointer client, gpointer ctx)
+static void dir_tree_file_remove_on_con_cb (gpointer client, gpointer ctx)
 {
     HttpConnection *con = (HttpConnection *) client;
     FileRemoveData *data = (FileRemoveData *) ctx;
@@ -710,7 +754,7 @@ static void dir_tree_file_remove_on_http_client_cb (gpointer client, gpointer ct
     res = http_connection_make_request_to_storage_url (con, 
         req_path, "DELETE", 
         NULL,
-        dir_tree_file_remove_on_http_client_data_cb,
+        dir_tree_file_remove_on_con_data_cb,
         data
     );
 
@@ -757,7 +801,177 @@ void dir_tree_file_remove (DirTree *dtree, fuse_ino_t ino, DirTree_file_remove_c
     data->req = req;
 
     client_pool_get_client (application_get_ops_client_pool (dtree->app),
-        dir_tree_file_remove_on_http_client_cb, data);
+        dir_tree_file_remove_on_con_cb, data);
+}
+/*}}}*/
+
+/*{{{ dir_tree_dir_remove */
+
+typedef struct {
+    DirTree *dtree;
+    fuse_ino_t ino;
+    DirEntry *en;
+    DirTree_dir_remove_cb dir_remove_cb;
+    fuse_req_t req;
+    GQueue *q_objects_to_remove;
+} DirRemoveData;
+
+static void dir_tree_dir_remove_try_to_remove_object (HttpConnection *con, DirRemoveData *data);
+
+// object is removed, call remove function again
+static void dir_tree_dir_remove_on_object_removed_cb (HttpConnection *con, gpointer ctx, 
+        const gchar *buf, size_t buf_len, G_GNUC_UNUSED struct evkeyvalq *headers, gboolean success)
+{
+    DirRemoveData *data = (DirRemoveData *) ctx;
+
+    dir_tree_dir_remove_try_to_remove_object (con, data);
+}
+
+// check if there is any object left in the queue and remove it
+static void dir_tree_dir_remove_try_to_remove_object (HttpConnection *con, DirRemoveData *data)
+{
+    gchar *line;
+    gchar *req_path;
+    gboolean res;
+
+    // check if all objects are removed
+    if (g_queue_is_empty (data->q_objects_to_remove)) {
+        LOG_debug (DIR_TREE_LOG, "All objects are removed !");
+        http_connection_release (con);
+        g_queue_free_full (data->q_objects_to_remove, g_free);
+        if (data->dir_remove_cb)
+            data->dir_remove_cb (data->req, TRUE);
+        g_free (data);
+        return;
+    }
+
+    line = g_queue_pop_tail (data->q_objects_to_remove);
+
+    req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app),
+        line);
+    g_free (line);
+
+    res = http_connection_make_request_to_storage_url (con, 
+        req_path, "DELETE", 
+        NULL,
+        dir_tree_dir_remove_on_object_removed_cb,
+        data
+    );
+
+    g_free (req_path);
+
+    if (!res) {
+        LOG_err (DIR_TREE_LOG, "Failed to create HTTP request !");
+        http_connection_release (con);
+        g_queue_free_full (data->q_objects_to_remove, g_free);
+        if (data->dir_remove_cb)
+            data->dir_remove_cb (data->req, FALSE);
+        g_free (data);
+    }
+
+}
+
+// got the list of all objects in the directory
+// create list to-remove
+static void dir_tree_dir_remove_on_con_objects_cb (HttpConnection *con, gpointer ctx, 
+        const gchar *buf, size_t buf_len, G_GNUC_UNUSED struct evkeyvalq *headers, gboolean success)
+{
+    DirRemoveData *data = (DirRemoveData *) ctx;
+    struct evbuffer *evb;
+    char *line;
+
+    if (!success) {
+        LOG_err (DIR_TREE_LOG, "Failed to get directory's content !");
+        http_connection_release (con);
+        if (data->dir_remove_cb)
+            data->dir_remove_cb (data->req, FALSE);
+        g_free (data);
+        return;
+    }
+
+    evb = evbuffer_new ();
+    evbuffer_add (evb, buf, buf_len);
+
+    data->q_objects_to_remove = g_queue_new ();
+    while (line = evbuffer_readln (evb, NULL, EVBUFFER_EOL_CRLF)) {
+        LOG_debug (DIR_TREE_LOG, "Removing %s", line);
+        g_queue_push_head (data->q_objects_to_remove, line);
+    }
+
+    evbuffer_free (evb);
+
+    dir_tree_dir_remove_try_to_remove_object (con, data);
+
+}
+
+// HTTP Connection is ready, get list of object in directory
+static void dir_tree_dir_remove_on_con_cb (gpointer client, gpointer ctx)
+{
+    HttpConnection *con = (HttpConnection *) client;
+    DirRemoveData *data = (DirRemoveData *) ctx;
+    gchar *req_path;
+    gboolean res;
+
+    http_connection_acquire (con);
+
+    // XXX: max keys
+    req_path = g_strdup_printf ("/%s?prefix=%s/", 
+        application_get_container_name (con->app), data->en->fullpath);
+
+
+    res = http_connection_make_request_to_storage_url (con, 
+        req_path, "GET", 
+        NULL,
+        dir_tree_dir_remove_on_con_objects_cb,
+        data
+    );
+
+    g_free (req_path);
+
+    if (!res) {
+        LOG_err (DIR_TREE_LOG, "Failed to create HTTP request !");
+        if (data->dir_remove_cb)
+            data->dir_remove_cb (data->req, FALSE);
+        
+        http_connection_release (con);
+        g_free (data);
+    }
+}
+
+// try to get directory entry
+void dir_tree_dir_remove (DirTree *dtree, fuse_ino_t parent_ino, const char *name, 
+    DirTree_dir_remove_cb dir_remove_cb, fuse_req_t req)
+{
+    DirRemoveData *data;
+    DirEntry *parent_en;
+    DirEntry *en;
+
+    LOG_debug (DIR_TREE_LOG, "Removing dir: %s parent: %"INO_FMT, name, parent_ino);
+
+    parent_en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (parent_ino));
+    if (!parent_en || parent_en->type != DET_dir) {
+        LOG_err (DIR_TREE_LOG, "Entry (ino = %"INO_FMT") not found !", parent_ino);
+        dir_remove_cb (req, FALSE);
+        return;
+    }
+
+    en = g_hash_table_lookup (parent_en->h_dir_tree, name);
+    if (!en) {
+        LOG_debug (DIR_TREE_LOG, "Entry '%s' not found !", name);
+        dir_remove_cb (req, FALSE);
+        return;
+    }
+    
+    // ok, directory is found, get HttpConnection
+    data = g_new0 (DirRemoveData, 1);
+    data->dtree = dtree;
+    data->dir_remove_cb = dir_remove_cb;
+    data->req = req;
+    data->ino = en->ino;
+    data->en = en;
+
+    client_pool_get_client (application_get_ops_client_pool (dtree->app),
+        dir_tree_dir_remove_on_con_cb, data);
 }
 /*}}}*/
 
@@ -773,7 +987,7 @@ void dir_tree_dir_create (DirTree *dtree, fuse_ino_t parent_ino, const char *nam
     
     // entry not found
     if (!dir_en || dir_en->type != DET_dir) {
-        LOG_msg (DIR_TREE_LOG, "Directory (%"INO_FMT") not found !", parent_ino);
+        LOG_err (DIR_TREE_LOG, "Directory (%"INO_FMT") not found !", parent_ino);
         mkdir_cb (req, FALSE, 0, 0, 0, 0);
         return;
     }
@@ -781,7 +995,7 @@ void dir_tree_dir_create (DirTree *dtree, fuse_ino_t parent_ino, const char *nam
     // create a new entry
     en = dir_tree_add_entry (dtree, name, mode, DET_dir, parent_ino, 10, time (NULL));
     if (!en) {
-        LOG_msg (DIR_TREE_LOG, "Failed to create dir: %s !", name);
+        LOG_err (DIR_TREE_LOG, "Failed to create dir: %s !", name);
         mkdir_cb (req, FALSE, 0, 0, 0, 0);
         return;
     }

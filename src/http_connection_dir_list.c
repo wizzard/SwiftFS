@@ -9,7 +9,6 @@ typedef struct {
     Application *app;
     DirTree *dir_tree;
     HttpConnection *con;
-    gchar *resource_path;
     gchar *dir_path;
     fuse_ino_t ino;
     gint max_keys;
@@ -26,7 +25,7 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
     xmlNode *onode = NULL, *anode = NULL, *text_node = NULL;
     xmlParserCtxtPtr xmlctx;
     //struct tm last_modified;
-    gchar *name = NULL;
+    gchar *name;
     time_t last_modified = time (NULL);
 
     xmlctx = xmlCreatePushParserCtxt (NULL, NULL, "", 0, NULL);
@@ -56,14 +55,14 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
             off_t size = 0;
 
             for (anode = onode->children; anode; anode = anode->next) {
-                char *content = "<?!?>";
+                char *content = NULL;
                 
                 for (text_node = anode->children; text_node; text_node = text_node->next)
                     if (text_node->type == XML_TEXT_NODE)
                       content = (char *)text_node->content;
 
                 if (!strcasecmp((const char *)anode->name, "name")) {
-                    name = strdup (basename (content));
+                    name = g_path_get_basename (content);
                 }
 
                 if (!strcasecmp((const char *)anode->name, "bytes"))
@@ -78,33 +77,33 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
                     last_modified = mktime(&tmp);
                 }
             }
-            
-            LOG_debug (CON_DIR_LOG, ">> got file entry: %s %zu", name, size);
-            dir_tree_update_entry (dir_list->dir_tree, dir_list->dir_path, DET_file, dir_list->ino, name, size, last_modified);
+            if (name) {
+                LOG_debug (CON_DIR_LOG, ">> got file entry: %s %zu", name, size);
+                dir_tree_update_entry (dir_list->dir_tree, dir_list->dir_path, DET_file, dir_list->ino, name, size, last_modified);
+                g_free (name);
+            }
 
         // directory
         } else if (is_subdir) {
-            char * slash;
+            //char * slash;
             name = NULL;
 
             for (anode = onode->children; anode; anode = anode->next) {
-                char *content = "<?!?>";
+                char *content = NULL;
                 
                 for (text_node = anode->children; text_node; text_node = text_node->next)
                     if (text_node->type == XML_TEXT_NODE)
                       content = (char *)text_node->content;
                 if (!strcasecmp((const char *)anode->name, "name")) {
-                    name = g_strdup (content);
-                    // Remove trailing slash
-                    slash = strrchr (name, '/');
-                    if (slash && (0 == *(slash + 1)))
-                        *slash = 0;
-                    name = name + 1;
+                    name = g_path_get_basename (content);
                 }
             }
 
-            //LOG_debug (CON_DIR_LOG, ">> got dir entry: %s", name);
-            dir_tree_update_entry (dir_list->dir_tree, dir_list->dir_path, DET_dir, dir_list->ino, name, 0, last_modified);
+            if (name) {
+                LOG_debug (CON_DIR_LOG, ">> got dir entry: %s", name);
+                dir_tree_update_entry (dir_list->dir_tree, dir_list->dir_path, DET_dir, dir_list->ino, name, 0, last_modified);
+                g_free (name);
+            }
         } else {
             LOG_debug (CON_DIR_LOG, "unknown element: %s", onode->name);
         }
@@ -241,13 +240,10 @@ gboolean http_connection_get_directory_listing (HttpConnection *con, const gchar
     dir_tree_start_update (dir_req->dir_tree, dir_path);
     
     //XXX: fix dir_path
-    if (!strcmp (dir_path, "/")) {
-        dir_req->dir_path = g_strdup ("/");
-        dir_req->resource_path = g_strdup_printf ("/");
+    if (!strcmp (dir_path, "")) {
+        dir_req->dir_path = g_strdup ("");
     } else {
-        dir_req->dir_path = g_strdup_printf ("/%s/", dir_path);
-        dir_req->dir_path = dir_req->dir_path + 1;
-        dir_req->resource_path = g_strdup_printf ("/");
+        dir_req->dir_path = g_strdup_printf ("%s/", dir_path);
     }
    
     req_path = g_strdup_printf ("/%s?delimiter=/&prefix=%s&max-keys=%d&format=xml", 

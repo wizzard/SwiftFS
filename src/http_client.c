@@ -609,6 +609,7 @@ static gboolean http_client_send_initial_request (HttpClient *http)
 
     // ask to keep connection opened
     evbuffer_add_printf (out_buf, "Connection: %s\r\n", "keep-alive");
+    evbuffer_add_printf (out_buf, "Accept-Encoding: %s\r\n", "identify");
 
     // end line
     evbuffer_add_printf (out_buf, "\r\n");

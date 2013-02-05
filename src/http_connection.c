@@ -283,6 +283,9 @@ gboolean http_connection_make_request_ (HttpConnection *con,
         LOG_err (CON_LOG, "Failed to parse StorageUrl: %s", url);
         return FALSE;
     }
+
+    // XXX: we need to update application container path
+    application_update_full_container_name (con->app, evhttp_uri_get_path (uri));
     
     data = g_new0 (RequestData, 1);
     data->response_cb = response_cb;
@@ -313,6 +316,7 @@ gboolean http_connection_make_request_ (HttpConnection *con,
 
     evhttp_add_header (req->output_headers, "X-Auth-Token", con->auth_token);
     evhttp_add_header (req->output_headers, "Host", evhttp_uri_get_host (uri));
+    evhttp_add_header (req->output_headers, "Accept-Encoding", "identify");
 
     // add headers
     for (l = g_list_first (con->l_output_headers); l; l = g_list_next (l)) {
@@ -325,7 +329,6 @@ gboolean http_connection_make_request_ (HttpConnection *con,
     http_connection_free_headers (con->l_output_headers);
     con->l_output_headers = NULL;
 
-	
     // ask to keep connection opened
     evhttp_add_header (req->output_headers, "Connection", "keep-alive");
 

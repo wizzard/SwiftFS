@@ -33,6 +33,7 @@ struct _Application {
     gchar *auth_pwd;
 
     gchar *container_name;
+    gchar *full_container_name;
     struct evhttp_uri *auth_uri;
 
     gboolean foreground;
@@ -79,9 +80,25 @@ ClientPool *application_get_ops_client_pool (Application *app)
     return app->ops_client_pool;
 }
 
+// Returns:  cont1/
 const gchar *application_get_container_name (Application *app)
 {
     return app->container_name;
+}
+
+// Returns:  /v1/AUTH_test/cont1/
+const gchar *application_get_full_container_name (Application *app)
+{
+    return app->full_container_name;
+}
+
+void application_update_full_container_name (Application *app, const gchar *full_container_name)
+{
+    if (app->full_container_name)
+        return;
+    app->full_container_name = g_strdup (full_container_name);
+
+    LOG_debug (APP_LOG, "Full container name: %s", app->full_container_name);
 }
 
 ConfData *application_get_conf (Application *app)
@@ -302,6 +319,7 @@ static void application_destroy (Application *app)
 
     g_free (app->mountpoint);
     g_free (app->container_name);
+    g_free (app->full_container_name);
     evhttp_uri_free (app->auth_uri);
 
     conf_destroy (app->conf);
@@ -350,6 +368,7 @@ int main (int argc, char *argv[])
     // init main app structure
     app = g_new0 (Application, 1);
     app->evbase = event_base_new ();
+    app->full_container_name = NULL;
 
     if (!app->evbase) {
         LOG_err (APP_LOG, "Failed to create event base !");

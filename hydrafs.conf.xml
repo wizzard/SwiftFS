@@ -46,7 +46,8 @@
     <!-- maximum size of cache directory -->
     <cache_dir_max_size type="string">1Gb</cache_dir_max_size>
     <!-- segment size for upload / download files (5mb) -->
-    <segment_size type="uint">5242880</segment_size>
+    <!-- <segment_size type="uint">5242880</segment_size> -->
+    <segment_size type="uint">10240</segment_size>
 </filesystem>
 
 <statistics>

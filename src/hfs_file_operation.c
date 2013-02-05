@@ -18,11 +18,13 @@ struct _HfsFileOp {
     size_t segment_count; // current count of segments uploaded / downloaded
 
     gboolean manifest_handled; // set TRUE if manifest file is downloaded / uploaded
+
+    // used by reading
+    size_t segment_pos; // position in file
 };
 /*}}}*/
 
 #define FOP_LOG "fop"
-#define SEGMENTS_DIR "segments"
 
 /*{{{ create / destroy */
 
@@ -99,17 +101,23 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
         // send manifest for a "large" file
         if (fop->segment_count > 0) {
             gchar *tmp;
+            gchar s[20];
 
-            tmp = g_strdup_printf ("/%s/%s/%s", application_get_container_name (con->app), 
-                fop->fname, SEGMENTS_DIR);
+            g_snprintf (s, sizeof (s), "%zu", fop->current_size);
+
+            tmp = g_strdup_printf ("%s/%s/", application_get_container_name (con->app), 
+                fop->fname);
             http_connection_add_output_header (con, "X-Object-Manifest", tmp);
             g_free (tmp);
 
-            req_path = g_strdup_printf ("/%s%s", application_get_container_name (con->app), fop->fname);
+            // add Meta header with object's size
+            http_connection_add_output_header (con, "X-Object-Meta-Size", s);
+
+            req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), fop->fname);
         // an empty file
         } else {
             // do nothing
-            req_path = g_strdup_printf ("/%s%s", application_get_container_name (con->app), fop->fname);
+            req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), fop->fname);
         }
 
     // segment buffer contains data. Check if a file is "small" or "large"
@@ -118,8 +126,8 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
         // send segment
         if (fop->segment_count > 0) {
             // send segment buffer, then send manifest (if file is a large)
-            req_path = g_strdup_printf ("/%s/%s%s/%zu", application_get_container_name (con->app), 
-                fop->fname, SEGMENTS_DIR, fop->segment_count);
+            req_path = g_strdup_printf ("/%s/%s/%zu", application_get_container_name (con->app), 
+                fop->fname, fop->segment_count);
         
         // send a "small" file
         } else {
@@ -231,8 +239,8 @@ static void hfs_fileop_write_on_http_client_cb (gpointer client, gpointer ctx)
     fop = write_data->fop;
 
     // send segment buffer
-    req_path = g_strdup_printf ("/%s/%s%s/%zu", application_get_container_name (con->app), 
-        fop->fname, SEGMENTS_DIR, fop->segment_count);
+    req_path = g_strdup_printf ("/%s/%s/%zu", application_get_container_name (con->app), 
+        fop->fname, fop->segment_count);
 
     fop->segment_count ++;
     
@@ -310,11 +318,27 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
 }
 /*}}}*/
 
+typedef struct {
+    HfsFileOp *fop;
+    HfsFileOp_on_buffer_read_cb on_buffer_read_cb;
+    gpointer ctx;
+
+    struct evbuffer *read_buf; // requested read buffer
+    size_t size;
+    off_t off;
+
+} FileOpReadData;
+
 // Send request to server to get segment buffer
 void hfs_fileop_read_buffer (HfsFileOp *fop,
     size_t size, off_t off,
     HfsFileOp_on_buffer_read_cb on_buffer_read_cb, gpointer ctx)
 {
-    // XXX: check file in CacheMng
-    // XXX: add task to ClientPool
+    //XXX: check cache
+
+    // segment_buffer fully downloaded
+    if (fop->segment_pos <= off && evbuffer_get_length (segment_buf) >= size) {
+        // done
+    }
+    
 }
