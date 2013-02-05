@@ -28,7 +28,7 @@
 
 <encryption>
     <!-- set True if enable encryption/decryption subsystem -->
-    <enabled type="boolean">True</enabled>
+    <enabled type="boolean">False</enabled>
     <!-- path to key file -->
     <key_file type="string">test.key</key_file>
     <!-- two integers for salt -->
@@ -48,7 +48,7 @@
     <!-- maximum size of cache directory -->
     <cache_dir_max_size type="string">1Gb</cache_dir_max_size>
     <!-- maximum time of cached object, 10 min -->
-    <cache_object_ttl type="uint">600<cache_object_ttl/>
+    <cache_object_ttl type="uint">600</cache_object_ttl>
     <!-- segment size for upload / download files (5mb) -->
     <!-- <segment_size type="uint">5242880</segment_size> -->
     <segment_size type="uint">10240</segment_size>
