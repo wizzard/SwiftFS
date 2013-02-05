@@ -619,6 +619,22 @@ typedef struct {
     fuse_req_t req;
 } FileReadOpData;
 
+static void dir_tree_on_buffer_read_cb (gpointer ctx, gboolean success, char *buf, size_t size)
+{
+    FileReadOpData *op_data = (FileReadOpData *)ctx;
+
+    if (!success) {
+        LOG_err (DIR_TREE_LOG, "Failed to read file !");
+        op_data->file_read_cb (op_data->req, FALSE, NULL, 0);
+        g_free (op_data);
+        return;
+    }
+    
+    op_data->file_read_cb (op_data->req, TRUE, buf, size);
+    g_free (op_data);
+}
+
+// read file segment starting at off position, size length
 void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino, 
     size_t size, off_t off,
     DirTree_file_read_cb file_read_cb, fuse_req_t req,
@@ -634,7 +650,7 @@ void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino,
     // if entry does not exist
     // or it's not a directory type ?
     if (!en) {
-        LOG_msg (DIR_TREE_LOG, "Entry (ino = %"INO_FMT") not found !", ino);
+        LOG_err (DIR_TREE_LOG, "Entry (ino = %"INO_FMT") not found !", ino);
         file_read_cb (req, FALSE, NULL, 0);
         return;
     }
@@ -647,7 +663,7 @@ void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino,
     op_data->file_read_cb = file_read_cb;
     op_data->req = req;
 
-    hfs_fileop_read_buffer (fop, buf, size, off, dir_tree_on_buffer_read_cb, op_data);
+    hfs_fileop_read_buffer (fop, size, off, dir_tree_on_buffer_read_cb, op_data);
 
 }
 /*}}}*/

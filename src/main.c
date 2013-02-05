@@ -20,6 +20,7 @@ struct _Application {
     
     HfsFuse *hfs_fuse;
     DirTree *dir_tree;
+    CacheMng *cmng;
 
     AuthClient *auth_client;
 
@@ -116,6 +117,11 @@ HfsEncryption *application_get_encryption (Application *app)
     return app->enc;
 }
 
+CacheMng *application_get_cache_mng (Application *app)
+{
+    return app->cmng;
+}
+
 /*}}}*/
 
 /*{{{ signal handlers */
@@ -209,6 +215,12 @@ static gint application_finish_initialization_and_run (Application *app)
 {
     struct sigaction sigact;
 
+    app->cmng = cache_mng_create (app);
+    if (!app->cmng) {
+        LOG_err (APP_LOG, "Failed to create CacheMng !");
+        event_base_loopexit (app->evbase, NULL);
+        return -1;
+    }
 
 /*{{{ DirTree*/
     app->dir_tree = dir_tree_create (app);
@@ -303,6 +315,9 @@ static void application_destroy (Application *app)
 
     if (app->dir_tree)
         dir_tree_destroy (app->dir_tree);
+
+    if (app->cmng)
+        cache_mng_destroy (app->cmng);
 
     if (app->sigint_ev)
         event_free (app->sigint_ev);

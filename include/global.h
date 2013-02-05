@@ -75,6 +75,7 @@ typedef struct _AuthClient AuthClient;
 typedef struct _HttpConnection HttpConnection;
 typedef struct _DirTree DirTree;
 typedef struct _HfsFuse HfsFuse;
+typedef struct _CacheMng CacheMng;
 typedef struct _ClientPool ClientPool;
 typedef enum _LogLevel LogLevel;
 typedef struct _ConfData ConfData;
@@ -91,6 +92,7 @@ ClientPool *application_get_read_client_pool (Application *app);
 ClientPool *application_get_write_client_pool (Application *app);
 ClientPool *application_get_ops_client_pool (Application *app);
 DirTree *application_get_dir_tree (Application *app);
+CacheMng *application_get_cache_mng (Application *app);
 AuthClient *application_get_auth_client (Application *app);
 HfsEncryption *application_get_encryption (Application *app);
 
