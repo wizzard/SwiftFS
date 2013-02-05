@@ -20,6 +20,7 @@ struct _HfsFileOp {
     gboolean manifest_handled; // set TRUE if manifest file is downloaded / uploaded
 
     // used by reading
+    size_t segment_id; // id of the segment (which is in segment_buf)
     size_t segment_pos; // position in file
 };
 /*}}}*/
@@ -41,6 +42,7 @@ HfsFileOp *hfs_fileop_create (Application *app, const gchar *fname)
     fop->segment_count = 0;
     fop->manifest_handled = FALSE;
     fop->fname = g_strdup (fname);
+    fop->segment_id = 0;
 
     return fop;
 }
@@ -334,11 +336,34 @@ void hfs_fileop_read_buffer (HfsFileOp *fop,
     size_t size, off_t off,
     HfsFileOp_on_buffer_read_cb on_buffer_read_cb, gpointer ctx)
 {
-    //XXX: check cache
+    size_t segment_start_id;
+    size_t segment_len;
+    unsigned char *data_out;
+    size_t data_len;
 
-    // segment_buffer fully downloaded
-    if (fop->segment_pos <= off && evbuffer_get_length (segment_buf) >= size) {
-        // done
-    }
+    //XXX: check cache
     
+    // get the first segmentId
+    segment_start_id = off / conf_get_uint (fop->conf, "filesystem.segment_size");
+    segment_len = evbuffer_get_length (fop->segment_buf);
+
+    // check that we have this segment downloaded 
+    if (fop->segment_id == segment_start_id && segment_len > 0) {
+        off_t start_pos;
+        size_t current_len;
+        
+        // get the offset in the current segment
+        start_pos = off - segment_start_id * conf_get_uint (fop->conf, "filesystem.segment_size");
+        // get length in current segment buffer
+        if (segment_len <= start_pos + size)
+            current_len = segment_len - start_pos;
+        else
+            current_len = size;
+
+        evbuffer_copyout_from (fop->segment_buf, &pos, data_out, data_len);
+        evbuffer_add (read_buf, data_out, data_len);
+
+
+    }
+
 }
