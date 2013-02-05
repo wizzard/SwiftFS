@@ -26,6 +26,9 @@ struct _HttpConnection {
 
     // is used by high level
     gboolean is_acquired;
+
+    // additional output headers
+    GList *l_output_headers;
 };
 
 
@@ -49,6 +52,8 @@ gboolean http_connection_get_directory_listing (HttpConnection *con, const gchar
 typedef void (*HttpConnection_on_entry_sent_cb) (gpointer ctx, gboolean success);
 gboolean http_connection_file_send (HttpConnection *con, int fd, const gchar *resource_path, 
     HttpConnection_on_entry_sent_cb on_entry_sent_cb, gpointer ctx);
+
+void http_connection_add_output_header (HttpConnection *con, const gchar *key, const gchar *value);
 
 typedef void (*HttpConnection_response_cb) (HttpConnection *con, gpointer ctx, 
         const gchar *buf, size_t buf_len, struct evkeyvalq *headers, gboolean success);

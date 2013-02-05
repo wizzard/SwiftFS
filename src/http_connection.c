@@ -7,6 +7,12 @@
 
 /*{{{ struct*/
 
+// HTTP header: key, value
+typedef struct {
+    gchar *key;
+    gchar *value;
+} HttpConnectionHeader;
+
 #define CON_LOG "con"
 
 static void http_connection_on_close (struct evhttp_connection *evcon, void *ctx);
@@ -31,6 +37,7 @@ gpointer http_connection_create (Application *app)
     con->auth_client = application_get_auth_client (app);
     con->evcon = NULL;
     con->auth_token = NULL;
+    con->l_output_headers = NULL;
 
     con->is_acquired = FALSE;
 
@@ -218,6 +225,33 @@ done:
     g_free (data);
 }
 
+
+// add an header to the outgoing request
+void http_connection_add_output_header (HttpConnection *con, const gchar *key, const gchar *value)
+{
+    HttpConnectionHeader *header;
+
+    header = g_new0 (HttpConnectionHeader, 1);
+    header->key = g_strdup (key);
+    header->value = g_strdup (value);
+
+    con->l_output_headers = g_list_append (con->l_output_headers, header);
+}
+
+static void http_connection_free_headers (GList *l_headers)
+{
+    GList *l;
+    for (l = g_list_first (l_headers); l; l = g_list_next (l)) {
+        HttpConnectionHeader *header = (HttpConnectionHeader *) l->data;
+        g_free (header->key);
+        g_free (header->value);
+    }
+
+    g_list_free (l_headers);
+}
+
+
+
 // internal
 gboolean http_connection_make_request_ (HttpConnection *con, 
     const gchar *url,
@@ -234,6 +268,7 @@ gboolean http_connection_make_request_ (HttpConnection *con,
     enum evhttp_cmd_type cmd_type;
     struct evhttp_uri *uri;
     gchar *req_uri;
+    GList *l;
 
     // connect
     if (!con->evcon) {
@@ -277,7 +312,19 @@ gboolean http_connection_make_request_ (HttpConnection *con,
     }
 
     evhttp_add_header (req->output_headers, "X-Auth-Token", con->auth_token);
-    evhttp_add_header (req->output_headers, "Host", evhttp_uri_get_host (uri));	
+    evhttp_add_header (req->output_headers, "Host", evhttp_uri_get_host (uri));
+
+    // add headers
+    for (l = g_list_first (con->l_output_headers); l; l = g_list_next (l)) {
+        HttpConnectionHeader *header = (HttpConnectionHeader *) l->data;
+        evhttp_add_header (req->output_headers, 
+            header->key, header->value
+        );
+    }
+
+    http_connection_free_headers (con->l_output_headers);
+    con->l_output_headers = NULL;
+
 	
     // ask to keep connection opened
     evhttp_add_header (req->output_headers, "Connection", "keep-alive");

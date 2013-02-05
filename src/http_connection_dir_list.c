@@ -79,7 +79,7 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
                 }
             }
             
-            //LOG_debug (CON_DIR_LOG, ">> got file entry: %s", name);
+            LOG_debug (CON_DIR_LOG, ">> got file entry: %s %zu", name, size);
             dir_tree_update_entry (dir_list->dir_tree, dir_list->dir_path, DET_file, dir_list->ino, name, size, last_modified);
 
         // directory

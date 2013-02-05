@@ -9,7 +9,7 @@
 
 typedef struct _HfsFileOp HfsFileOp;
 
-HfsFileOp *hfs_fileop_create ();
+HfsFileOp *hfs_fileop_create (Application *app, const gchar *fname);
 void hfs_fileop_destroy (HfsFileOp *fop);
 
 void hfs_fileop_release (HfsFileOp *fop);

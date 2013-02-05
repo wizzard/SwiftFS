@@ -211,7 +211,7 @@ static void hfs_fuse_on_read (evutil_socket_t fd, short what, void *arg)
 #define min(x, y) ((x) < (y) ? (x) : (y))
 
 // return newly allocated buffer which holds directory entry
-void hfs_fuse_add_dirbuf (fuse_req_t req, struct dirbuf *b, const char *name, fuse_ino_t ino)
+void hfs_fuse_add_dirbuf (fuse_req_t req, struct dirbuf *b, const char *name, fuse_ino_t ino, off_t file_size)
 {
     struct stat stbuf;
     size_t oldsize = b->size;
@@ -225,6 +225,7 @@ void hfs_fuse_add_dirbuf (fuse_req_t req, struct dirbuf *b, const char *name, fu
 	b->p = (char *) g_realloc (b->p, b->size);
 	memset (&stbuf, 0, sizeof (stbuf));
 	stbuf.st_ino = ino;
+    stbuf.st_size = file_size;
     // add entry
 	fuse_add_direntry (req, b->p + oldsize, b->size - oldsize, name, &stbuf, b->size);
 }

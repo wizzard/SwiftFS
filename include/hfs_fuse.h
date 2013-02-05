@@ -15,6 +15,6 @@ struct dirbuf {
 HfsFuse *hfs_fuse_new (Application *app, const gchar *mountpoint);
 void hfs_fuse_destroy (HfsFuse *hfs_fuse);
 
-void hfs_fuse_add_dirbuf (fuse_req_t req, struct dirbuf *b, const char *name, fuse_ino_t ino);
+void hfs_fuse_add_dirbuf (fuse_req_t req, struct dirbuf *b, const char *name, fuse_ino_t ino, off_t file_size);
 
 #endif

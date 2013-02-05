@@ -117,6 +117,7 @@ static DirEntry *dir_tree_add_entry (DirTree *dtree, const gchar *basename, mode
     DirEntry *parent_en = NULL;
     
     en = g_new0 (DirEntry, 1);
+    en->fop = NULL;
 
     // get the parent, for inodes > 0
     if (parent_ino) {
@@ -185,10 +186,10 @@ static gboolean dir_tree_stop_update_on_remove_child_cb (gpointer key, gpointer 
     if (en->age < dtree->current_age && !en->is_modified) {
         if (en->type == DET_dir) {
             // XXX:
-            LOG_debug (DIR_TREE_LOG, "Unsupported: %s", en->fullpath);
-            return FALSE;
+            LOG_debug (DIR_TREE_LOG, "Removing dir: %s", en->fullpath);
+            return TRUE;
         } else {
-            LOG_debug (DIR_TREE_LOG, "Removing %s", name);
+            LOG_debug (DIR_TREE_LOG, "Removing file %s", name);
             //XXX:
             return TRUE;
         }
@@ -311,8 +312,8 @@ void dir_tree_fill_on_dir_buf_cb (gpointer callback_data, gboolean success)
         // construct directory buffer
         // add "." and ".."
         memset (&b, 0, sizeof(b));
-        hfs_fuse_add_dirbuf (dir_fill_data->req, &b, ".", dir_fill_data->en->ino);
-        hfs_fuse_add_dirbuf (dir_fill_data->req, &b, "..", dir_fill_data->en->ino);
+        hfs_fuse_add_dirbuf (dir_fill_data->req, &b, ".", dir_fill_data->en->ino, 0);
+        hfs_fuse_add_dirbuf (dir_fill_data->req, &b, "..", dir_fill_data->en->ino, 0);
 
         LOG_debug (DIR_TREE_LOG, "Entries in directory : %u", g_hash_table_size (dir_fill_data->en->h_dir_tree));
         
@@ -322,7 +323,7 @@ void dir_tree_fill_on_dir_buf_cb (gpointer callback_data, gboolean success)
             DirEntry *tmp_en = (DirEntry *) value;
             // add only updated entries
             if (tmp_en->age >= dir_fill_data->dtree->current_age)
-                hfs_fuse_add_dirbuf (dir_fill_data->req, &b, tmp_en->basename, tmp_en->ino);
+                hfs_fuse_add_dirbuf (dir_fill_data->req, &b, tmp_en->basename, tmp_en->ino, tmp_en->size);
         }
         // done, save as cache
         dir_fill_data->en->dir_cache_size = b.size;
@@ -445,7 +446,7 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
     // hide it
     if (en->is_modified) {
         LOG_debug (DIR_TREE_LOG, "Entry '%s' is modified !", name);
-        lookup_cb (req, TRUE, en->ino, en->mode, 0, en->ctime);
+        lookup_cb (req, TRUE, en->ino, en->mode, en->size, en->ctime);
         return;
     }
 
@@ -528,7 +529,7 @@ void dir_tree_file_create (DirTree *dtree, fuse_ino_t parent_ino, const char *na
     //XXX: set as new 
     en->is_modified = TRUE;
 
-    fop = hfs_fileop_create (dtree->app);
+    fop = hfs_fileop_create (dtree->app, en->fullpath);
     en->fop = fop;
 
     LOG_debug (DIR_TREE_LOG, "[fop: %p] create %s, directory ino: %"INO_FMT, fop, name, parent_ino);
@@ -555,7 +556,7 @@ void dir_tree_file_open (DirTree *dtree, fuse_ino_t ino, struct fuse_file_info *
         return;
     }
 
-    fop = hfs_fileop_create (dtree->app);
+    fop = hfs_fileop_create (dtree->app, en->fullpath);
     en->fop = fop;
 
     LOG_debug (DIR_TREE_LOG, "[fop: %p] dir_tree_open inode %"INO_FMT, fop, ino);
@@ -678,7 +679,7 @@ typedef struct {
 } FileRemoveData;
 
 // file is removed
-static void dir_tree_file_remove_on_http_client_data_cb (HttpConnection *http_con, gpointer ctx, 
+static void dir_tree_file_remove_on_http_client_data_cb (HttpConnection *con, gpointer ctx, 
         const gchar *buf, size_t buf_len, G_GNUC_UNUSED struct evkeyvalq *headers, gboolean success)
 {
     FileRemoveData *data = (FileRemoveData *) ctx;
@@ -690,22 +691,23 @@ static void dir_tree_file_remove_on_http_client_data_cb (HttpConnection *http_co
 
     g_free (data);
     
-    http_connection_release (http_con);
+    http_connection_release (con);
 }
 
 // HTTP client is ready for a new request
 static void dir_tree_file_remove_on_http_client_cb (gpointer client, gpointer ctx)
 {
-    HttpConnection *http_con = (HttpConnection *) client;
+    HttpConnection *con = (HttpConnection *) client;
     FileRemoveData *data = (FileRemoveData *) ctx;
     gchar *req_path;
     gboolean res;
 
-    http_connection_acquire (http_con);
+    http_connection_acquire (con);
 
-    req_path = g_strdup_printf ("%s", data->en->fullpath);
+    req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app),
+        data->en->fullpath);
 
-    res = http_connection_make_request_to_storage_url (http_con, 
+    res = http_connection_make_request_to_storage_url (con, 
         req_path, "DELETE", 
         NULL,
         dir_tree_file_remove_on_http_client_data_cb,
@@ -718,7 +720,7 @@ static void dir_tree_file_remove_on_http_client_cb (gpointer client, gpointer ct
         LOG_err (DIR_TREE_LOG, "Failed to create HTTP request !");
         data->file_remove_cb (data->req, FALSE);
         
-        http_connection_release (http_con);
+        http_connection_release (con);
         g_free (data);
     }
 }
