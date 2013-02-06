@@ -261,13 +261,19 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
         seg, fop->segment_size
     );
     */
+    /*
     buf = evbuffer_pullup (fop->segment_buf, -1);
     evbuffer_add_reference (seg, 
         buf, fop->segment_size,
         NULL, NULL
     );
+    */
+    evbuffer_remove_buffer (fop->segment_buf, 
+        seg, fop->segment_size
+    );
 
     // encryption
+    /*
     if (conf_get_boolean (fop->conf, "encryption.enabled")) {
         unsigned char *in_buf;
         unsigned char *out_buf;
@@ -282,6 +288,7 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
 
         LOG_debug (FOP_LOG, "Encrypted: outlen: %zu", len);
     }
+    */
 
     res = http_connection_make_request_to_storage_url (con, 
         req_path, "PUT", seg,
@@ -291,7 +298,7 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
     evbuffer_free (seg);
 
     // remove segment_size bytes from segment buffer
-    evbuffer_drain (fop->segment_buf, fop->segment_size);
+    //evbuffer_drain (fop->segment_buf, fop->segment_size);
     
     g_free (req_path);
 
@@ -321,9 +328,10 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
     }
 
     // CacheMng
+    /*
     cache_mng_store_file_data (application_get_cache_mng (fop->app), 
         ino, buf_size, off, (unsigned char *) buf);
-    
+    */
 
     evbuffer_add (fop->segment_buf, buf, buf_size);
     fop->current_size += buf_size;
@@ -352,6 +360,8 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
     }
 }
 /*}}}*/
+
+/*{{{ hfs_fileop_read_buffer*/
 
 typedef struct {
     HfsFileOp *fop;
@@ -477,8 +487,11 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
     // current segment buf length
     segment_len = evbuffer_get_length (read_data->segment_buf);
 
-    LOG_debug (FOP_LOG, "current segment: %zu, segment len: %zu,  requested segment: %zu, req size: %zu, got so far: %zu of %zu",
-        read_data->segment_id, segment_len, segment_start_id, read_data->size_left, evbuffer_get_length (read_data->read_buf), read_data->req_size);
+    LOG_debug (FOP_LOG, "current segment: %zu, segment len: %zu,  requested segment: %zu, req size: %zu, got so far: %zu of %zu, current off: %zu",
+        read_data->segment_id, segment_len, segment_start_id, read_data->size_left, evbuffer_get_length (read_data->read_buf), read_data->req_size,
+        read_data->current_off);
+
+    LOG_debug (FOP_LOG, "Expected seg size: %zu, actual: %zu", fop->segment_size, evbuffer_get_length (read_data->segment_buf));
 
     // current segment buffer has different ID or empty
     if (segment_start_id != read_data->segment_id || !segment_len) {
@@ -508,6 +521,8 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
     len = fop->segment_size - start_pos;
     if (read_data->size_left <= len)
         len = read_data->size_left;
+
+    LOG_debug (FOP_LOG, "segment_buf size: %zu,  start_pos: %zu   len: %zu",  evbuffer_get_length (read_data->segment_buf), start_pos, len);
 
     evbuffer_add (read_data->read_buf, buf + start_pos, len);
 
@@ -540,7 +555,6 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
 
 }
 
-
 // manifest or a small file is retrieved
 static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx, 
     const gchar *buf, size_t buf_len, 
@@ -551,11 +565,14 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
     gboolean free_buf = FALSE;
     unsigned char *out_buf;
     int out_len;
+    unsigned char *manifest_header;
+
     
     LOG_debug (FOP_LOG, "Got %zu bytes for manifest: %zu", buf_len, read_data->segment_id);
 
     // release HttpConnection
     http_connection_release (con);
+    fop->manifest_handled = TRUE;
 
     if (!success) {
         LOG_err (FOP_LOG, "Failed to retrieve segment !");
@@ -566,13 +583,18 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
         return;
     }
 
+    manifest_header = evhttp_find_header (headers, "X-Object-Manifest");
+
     // 0 bytes - manifest
-    if (!buf_len) {
+    if (manifest_header) {
     
+        LOG_debug (FOP_LOG, "Got Manifest, starting to download segments");
         // start downloading segments
         hfs_fileop_read_get_buffer (read_data);
     // a small file
     } else {
+
+        LOG_debug (FOP_LOG, "Downloading a small file");
 
         //decrypt
         if (conf_get_boolean (fop->conf, "encryption.enabled")) {
@@ -606,7 +628,6 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
     }
 }
 
-
 // download manifest or a small file
 static void hfs_fileop_read_manifest_on_con_cb (gpointer client, gpointer ctx)
 {
@@ -625,7 +646,7 @@ static void hfs_fileop_read_manifest_on_con_cb (gpointer client, gpointer ctx)
         fop->fname);
 
     res = http_connection_make_request_to_storage_url (con, 
-        req_path, "GET", NULL,
+        req_path, "HEAD", NULL,
         hfs_fileop_read_manifest_on_read_cb,
         read_data
     );
@@ -652,6 +673,7 @@ void hfs_fileop_read_buffer (HfsFileOp *fop,
     FileOpReadData *read_data;
     unsigned char *buf;
 
+    /*
     buf = cache_mng_retr_file_data (application_get_cache_mng (fop->app), 
         ino, size, off);
     if (buf) {
@@ -659,9 +681,8 @@ void hfs_fileop_read_buffer (HfsFileOp *fop,
         g_free (buf);
         return;
     }
+    */
     
-    // XXX: handle non-segment files !
-
     read_data = g_new0 (FileOpReadData, 1);
     read_data->fop = fop;
     read_data->on_buffer_read_cb = on_buffer_read_cb;
@@ -675,17 +696,21 @@ void hfs_fileop_read_buffer (HfsFileOp *fop,
     read_data->segment_id = 0;
     read_data->ino = ino;
 
-    // get HTTP connection to download manifest or a small file
-    if (!client_pool_get_client (application_get_read_client_pool (fop->app), hfs_fileop_read_manifest_on_con_cb, read_data)) {
-        LOG_err (FOP_LOG, "Failed to get HTTP client !");
+    if (!fop->manifest_handled) {
+        // get HTTP connection to download manifest or a small file
+        if (!client_pool_get_client (application_get_read_client_pool (fop->app), hfs_fileop_read_manifest_on_con_cb, read_data)) {
+            LOG_err (FOP_LOG, "Failed to get HTTP client !");
 
-        read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
-        // free
-        evbuffer_free (read_data->read_buf);
-        evbuffer_free (read_data->segment_buf);
-        g_free (read_data);
+            read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+            // free
+            evbuffer_free (read_data->read_buf);
+            evbuffer_free (read_data->segment_buf);
+            g_free (read_data);
+        }
+    } else {
+        LOG_debug (FOP_LOG, "Continue downloading segments");
+        // start downloading segments
+        hfs_fileop_read_get_buffer (read_data);
     }
-
-
-
 }
+/*}}}*/

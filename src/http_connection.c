@@ -163,7 +163,7 @@ static void http_connection_on_close (struct evhttp_connection *evcon, void *ctx
 {
     HttpConnection *con = (HttpConnection *) ctx;
 
-    LOG_debug (CON_LOG, "Connection closed !");
+    LOG_debug (CON_LOG, "[%p] Connection closed !", con);
 }
 
 /*{{{ getters */
@@ -192,22 +192,19 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
     const char *buf;
     size_t buf_len;
 
-
     if (!req) {
-        LOG_err (CON_LOG, "Request failed !");
+        LOG_err (CON_LOG, "[%p] Request failed !", data->con);
         if (data->response_cb)
             data->response_cb (data->con, data->ctx, NULL, 0, NULL, FALSE);
         goto done;
     }
-    
-    LOG_debug (CON_LOG, "Got HTTP response from server: %d %s", evhttp_request_get_response_code (req), req->response_code_line);
 
     // XXX: handle redirect
     // 200 (Ok), 201 (Created), 202 (Accepted), 204 (No Content) are ok
     if (evhttp_request_get_response_code (req) != 200 && evhttp_request_get_response_code (req) != 204 &&
             evhttp_request_get_response_code (req) != 202 && evhttp_request_get_response_code (req) != 201) {
         LOG_err (CON_LOG, "Server returned HTTP error: %d !", evhttp_request_get_response_code (req));
-        LOG_debug (CON_LOG, "Error str: %s", req->response_code_line);
+        LOG_debug (CON_LOG, "[%p] Error str: %s", data->con, req->response_code_line);
         if (data->response_cb)
             data->response_cb (data->con, data->ctx, NULL, 0, NULL, FALSE);
         goto done;
@@ -216,6 +213,10 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
     inbuf = evhttp_request_get_input_buffer (req);
     buf_len = evbuffer_get_length (inbuf);
     buf = (const char *) evbuffer_pullup (inbuf, buf_len);
+
+    LOG_debug (CON_LOG, "[%p] Got HTTP response from server: %d %s inbuf: %zu", data->con,
+        evhttp_request_get_response_code (req), req->response_code_line, buf_len);
+
     
     if (data->response_cb)
         data->response_cb (data->con, data->ctx, buf, buf_len, evhttp_request_get_input_headers (req), TRUE);
