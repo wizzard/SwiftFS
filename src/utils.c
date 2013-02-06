@@ -4,25 +4,7 @@
  */
 #include "utils.h"
 
-struct _HfsRange {
-};
 
-HfsRange *hfs_range_create ()
-{
-}
-
-void hfs_range_destroy (HfsRange *range)
-{
-    g_free (range);
-}
-
-void hfs_range_add (HfsRange *range, guint64 start, guint64 end)
-{
-}
-
-gboolean hfs_range_in (HfsRange *range, guint64 start, guint64 end)
-{
-}
 
 gchar *get_random_string (size_t len, gboolean readable)
 {
