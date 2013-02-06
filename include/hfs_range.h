@@ -16,5 +16,7 @@ void hfs_range_destroy (HfsRange *range);
 void hfs_range_add (HfsRange *range, guint64 start, guint64 end);
 
 gboolean hfs_range_contain (HfsRange *range, guint64 start, guint64 end);
+gint hfs_range_count (HfsRange *range);
+void hfs_range_print (HfsRange *range);
 
 #endif
