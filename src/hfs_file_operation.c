@@ -117,6 +117,9 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
             // add Meta header with object's size
             http_connection_add_output_header (con, "X-Object-Meta-Size", s);
 
+            g_snprintf (s, sizeof (s), "%zu", fop->segment_size);
+            http_connection_add_output_header (con, "X-Object-Meta-Segment-Size", s);
+
             req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), fop->fname);
         // an empty file
         } else {
@@ -328,10 +331,8 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
     }
 
     // CacheMng
-    /*
     cache_mng_store_file_data (application_get_cache_mng (fop->app), 
         ino, buf_size, off, (unsigned char *) buf);
-    */
 
     evbuffer_add (fop->segment_buf, buf, buf_size);
     fop->current_size += buf_size;
@@ -373,6 +374,7 @@ typedef struct {
     off_t current_off;
     size_t req_size; // to verify
     off_t req_off;
+    size_t segment_size; // updated segment size
 
     // used by reading
     size_t segment_id; // id of the segment (which is in segment_buf)
@@ -427,7 +429,7 @@ static void hfs_fileop_read_on_read_cb (HttpConnection *con, void *ctx,
     evbuffer_add (read_data->segment_buf, out_buf, out_len);
     
     cache_mng_store_file_data (application_get_cache_mng (fop->app), 
-        read_data->ino, out_len, read_data->req_off, (unsigned char *) out_buf);
+        read_data->ino, out_len, read_data->segment_size * read_data->segment_id, (unsigned char *) out_buf);
 
     hfs_fileop_read_get_buffer (read_data);
 
@@ -483,7 +485,7 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
     size_t len;
 
     // get segmentID of the beginning
-    segment_start_id = read_data->current_off / fop->segment_size;
+    segment_start_id = read_data->current_off / read_data->segment_size;
     // current segment buf length
     segment_len = evbuffer_get_length (read_data->segment_buf);
 
@@ -491,7 +493,24 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
         read_data->segment_id, segment_len, segment_start_id, read_data->size_left, evbuffer_get_length (read_data->read_buf), read_data->req_size,
         read_data->current_off);
 
-    LOG_debug (FOP_LOG, "Expected seg size: %zu, actual: %zu", fop->segment_size, evbuffer_get_length (read_data->segment_buf));
+    LOG_debug (FOP_LOG, "Expected seg size: %zu, actual: %zu", read_data->segment_size, evbuffer_get_length (read_data->segment_buf));
+
+    // retrieve from cache
+    buf = cache_mng_retr_file_data (application_get_cache_mng (fop->app), 
+        read_data->ino, read_data->size_left, read_data->current_off);
+    if (buf) {
+        // empty buffer
+        evbuffer_drain (read_data->segment_buf, -1);
+
+        read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)buf, read_data->size_left);
+        g_free (buf);
+
+        evbuffer_free (read_data->read_buf);
+        evbuffer_free (read_data->segment_buf);
+        g_free (read_data);
+
+        return;
+    }
 
     // current segment buffer has different ID or empty
     if (segment_start_id != read_data->segment_id || !segment_len) {
@@ -510,6 +529,7 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
             evbuffer_free (read_data->read_buf);
             evbuffer_free (read_data->segment_buf);
             g_free (read_data);
+            return;
         }
 
         return;
@@ -517,8 +537,8 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
 
     // we have the right segment buffer
     buf = evbuffer_pullup (read_data->segment_buf, -1);
-    start_pos = read_data->current_off - (fop->segment_size * segment_start_id);
-    len = fop->segment_size - start_pos;
+    start_pos = read_data->current_off - (read_data->segment_size * segment_start_id);
+    len = read_data->segment_size - start_pos;
     if (read_data->size_left <= len)
         len = read_data->size_left;
 
@@ -565,9 +585,8 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
     gboolean free_buf = FALSE;
     unsigned char *out_buf;
     int out_len;
-    unsigned char *manifest_header;
+    const char *manifest_header;
 
-    
     LOG_debug (FOP_LOG, "Got %zu bytes for manifest: %zu", buf_len, read_data->segment_id);
 
     // release HttpConnection
@@ -587,8 +606,15 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
 
     // 0 bytes - manifest
     if (manifest_header) {
+        // get segment size header
+        const char *segment_size_header = evhttp_find_header (headers, "X-Object-Meta-Segment-Size");
+        if (segment_size_header)
+            read_data->segment_size  = strtoll ((char *)segment_size_header, NULL, 10);
+        
+        // update FOP segment size for further operations
+        fop->segment_size = read_data->segment_size;
     
-        LOG_debug (FOP_LOG, "Got Manifest, starting to download segments");
+        LOG_debug (FOP_LOG, "Got Manifest, starting to download segments. Segment size: %zu", read_data->segment_size);
         // start downloading segments
         hfs_fileop_read_get_buffer (read_data);
     // a small file
@@ -613,7 +639,7 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
         evbuffer_add (read_data->segment_buf, out_buf, out_len);
         
         cache_mng_store_file_data (application_get_cache_mng (fop->app), 
-            read_data->ino, out_len, read_data->req_off, (unsigned char *) out_buf);
+            read_data->ino, out_len, 0, (unsigned char *) out_buf);
 
         read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)out_buf, out_len);
 
@@ -671,17 +697,6 @@ void hfs_fileop_read_buffer (HfsFileOp *fop,
     HfsFileOp_on_buffer_read_cb on_buffer_read_cb, gpointer ctx)
 {
     FileOpReadData *read_data;
-    unsigned char *buf;
-
-    /*
-    buf = cache_mng_retr_file_data (application_get_cache_mng (fop->app), 
-        ino, size, off);
-    if (buf) {
-        on_buffer_read_cb (ctx, TRUE, (char *)buf, size);
-        g_free (buf);
-        return;
-    }
-    */
     
     read_data = g_new0 (FileOpReadData, 1);
     read_data->fop = fop;
@@ -695,6 +710,7 @@ void hfs_fileop_read_buffer (HfsFileOp *fop,
     read_data->req_off = off;
     read_data->segment_id = 0;
     read_data->ino = ino;
+    read_data->segment_size = fop->segment_size;
 
     if (!fop->manifest_handled) {
         // get HTTP connection to download manifest or a small file

@@ -3,12 +3,15 @@
  * file 'LICENSE.txt', which is part of this source code package.
  */
 #include "cache_mng.h"
+#include "hfs_range.h"
 
 struct _CacheMng {
     Application *app;
     ConfData *conf;
 
     GHashTable *h_files; // ino -> CacheEntry
+
+    guint64 cache_hits;
 };
 
 typedef struct {
@@ -16,6 +19,9 @@ typedef struct {
     int fd; //rw
     gchar *fname;
     time_t create_time;
+    time_t atime;
+
+    HfsRange *range;
 } CacheEntry;
 
 static void cache_entry_destroy (CacheEntry *en);
@@ -30,6 +36,7 @@ CacheMng *cache_mng_create (Application *app)
     cmng->app = app;
     cmng->conf = application_get_conf (app);
     cmng->h_files = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, (GDestroyNotify)cache_entry_destroy);
+    cmng->cache_hits = 0;
 
     //XXX: free cache directory
 
@@ -49,8 +56,9 @@ static CacheEntry *cache_entry_create (CacheMng *cmng, fuse_ino_t ino)
     en = g_new0 (CacheEntry, 1);
     en->cmng = cmng;
     en->fname = g_strdup_printf ("%s/%"INO_FMT, conf_get_string (cmng->conf, "filesystem.cache_dir"), ino);
-    en->create_time = time (NULL);
+    en->create_time = en->atime = time (NULL);
     en->fd = -1;
+    en->range = hfs_range_create ();
 
     en->fd = open (en->fname, O_RDWR | O_NOATIME | O_LARGEFILE | O_CREAT | O_CLOEXEC, S_IRUSR | S_IWUSR | S_IXUSR);
     if (en->fd == -1) {
@@ -64,6 +72,7 @@ static CacheEntry *cache_entry_create (CacheMng *cmng, fuse_ino_t ino)
 
 static void cache_entry_destroy (CacheEntry *en)
 {
+    hfs_range_create (en->range);
     g_free (en->fname);
     if (en->fd != -1)
         close (en->fd);
@@ -84,6 +93,15 @@ unsigned char *cache_mng_retr_file_data (CacheMng *cmng, fuse_ino_t ino, size_t 
     if (!en) {
         return NULL;
     }
+    // update access time
+    en->atime = time (NULL);
+
+    // check if we have range
+    if (!hfs_range_contain (en->range, off, off + size)) {
+        hfs_range_print (en->range);
+        LOG_debug (CMNG_LOG, "File doesn't have requested bytes [%zu %zu]  for ino: %"INO_FMT, off, off + size, ino);
+        return NULL;
+    }
 
     buf = g_new0 (unsigned char, size);
     out_size = pread (en->fd, buf, size, off);
@@ -99,6 +117,8 @@ unsigned char *cache_mng_retr_file_data (CacheMng *cmng, fuse_ino_t ino, size_t 
         return NULL;
     }
 
+    LOG_err (CMNG_LOG, "Retrieved [%zu %zu] bytes for ino: %"INO_FMT, off, off + size, ino);
+    cmng->cache_hits++;
     return buf;
 }
 
@@ -117,6 +137,8 @@ void cache_mng_store_file_data (CacheMng *cmng, fuse_ino_t ino, size_t size, off
         en = cache_entry_create (cmng, ino);
         g_hash_table_insert (cmng->h_files, GUINT_TO_POINTER (ino), en);
     }
+    // update access time
+    en->atime = time (NULL);
 
     out_size = pwrite (en->fd, buf, size, off);
     if (out_size == -1) {
@@ -124,7 +146,10 @@ void cache_mng_store_file_data (CacheMng *cmng, fuse_ino_t ino, size_t size, off
         return;
     }
 
-    LOG_debug (CMNG_LOG, "Stored %zu bytes for ino: %"INO_FMT, ino);
+    // add to range
+    hfs_range_add (en->range, off, off + size);
+
+    LOG_err (CMNG_LOG, "Stored [%zu %zu] bytes for ino: %"INO_FMT, off, off + size, ino);
 }
 
 

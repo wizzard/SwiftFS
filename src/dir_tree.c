@@ -882,7 +882,7 @@ static void dir_tree_on_buffer_read_cb (gpointer ctx, gboolean success, char *bu
 {
     FileReadOpData *op_data = (FileReadOpData *)ctx;
 
-    LOG_err (DIR_TREE_LOG, "READ_cb !");
+    LOG_debug (DIR_TREE_LOG, "file READ_cb !");
 
     if (!success) {
         LOG_err (DIR_TREE_LOG, "Failed to read file !");

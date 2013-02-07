@@ -40,7 +40,7 @@
     <!-- time to keep directory cache (seconds), 5 sec -->
     <dir_cache_max_time type="uint">5</dir_cache_max_time>
     <!-- set True to enable objects caching -->
-    <cache_enabled type="boolean">False</cache_enabled>
+    <cache_enabled type="boolean">True</cache_enabled>
     <!-- set True to enable calculating MD5 sum of file content, increases CPU load -->
     <md5_enabled type="boolean">False</md5_enabled>
     <!-- directory for storing cache objects -->
@@ -50,7 +50,8 @@
     <!-- maximum time of cached object, 10 min -->
     <cache_object_ttl type="uint">600</cache_object_ttl>
     <!-- segment size for upload / download files (5mb) -->
-    <segment_size type="uint">5242880</segment_size>
+    <!-- <segment_size type="uint">5242880</segment_size> -->
+    <segment_size type="uint">4242880</segment_size>
 </filesystem>
 
 <statistics>
