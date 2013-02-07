@@ -608,13 +608,21 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
     if (manifest_header) {
         // get segment size header
         const char *segment_size_header = evhttp_find_header (headers, "X-Object-Meta-Segment-Size");
-        if (segment_size_header)
-            read_data->segment_size  = strtoll ((char *)segment_size_header, NULL, 10);
-        
-        // update FOP segment size for further operations
-        fop->segment_size = read_data->segment_size;
+        const char *object_size_header = evhttp_find_header (headers, "X-Object-Meta-Size");
+        guint64 object_size = 0;
+
+        if (segment_size_header) {
+            read_data->segment_size = strtoll ((char *)segment_size_header, NULL, 10);
+            // update FOP segment size for further operations
+            fop->segment_size = read_data->segment_size;
+        }
+
+        if (object_size_header) {
+            object_size = strtoll ((char *)segment_size_header, NULL, 10);
+        }
     
-        LOG_debug (FOP_LOG, "Got Manifest, starting to download segments. Segment size: %zu", read_data->segment_size);
+        LOG_debug (FOP_LOG, "Got Manifest, starting to download segments. Segment size: %zu  Object size: %zu",
+            read_data->segment_size, object_size);
         // start downloading segments
         hfs_fileop_read_get_buffer (read_data);
     // a small file
