@@ -34,6 +34,7 @@ gpointer http_connection_create (Application *app)
 
     con->app = app;
     con->conf = application_get_conf (app);
+    con->stats_srv = application_get_stats_srv (app);
     con->auth_client = application_get_auth_client (app);
     con->evcon = NULL;
     con->auth_token = NULL;
@@ -217,6 +218,10 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
     LOG_debug (CON_LOG, "[%p] Got HTTP response from server: %d %s inbuf: %zu", data->con,
         evhttp_request_get_response_code (req), req->response_code_line, buf_len);
 
+    if (buf_len) {
+        // update stats
+        hfs_stats_srv_add_down_bytes (con->stats_srv, buf_len);
+    }
     
     if (data->response_cb)
         data->response_cb (data->con, data->ctx, buf, buf_len, evhttp_request_get_input_headers (req), TRUE);
@@ -251,8 +256,6 @@ static void http_connection_free_headers (GList *l_headers)
 
     g_list_free (l_headers);
 }
-
-
 
 // internal
 gboolean http_connection_make_request_ (HttpConnection *con, 
@@ -336,6 +339,9 @@ gboolean http_connection_make_request_ (HttpConnection *con,
 
     if (out_buffer) {
         evbuffer_add_buffer (req->output_buffer, out_buffer);
+
+        // update stats
+        hfs_stats_srv_add_up_bytes (con->stats_srv, evbuffer_get_length (req->output_buffer));
     }
 
     LOG_msg (CON_LOG, "[%p] New request: %s %s buf: %zu", con, http_cmd, url, evbuffer_get_length (req->output_buffer));

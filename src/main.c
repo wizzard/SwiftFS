@@ -11,6 +11,7 @@
 #include "auth_client.h"
 #include "hfs_encryption.h"
 #include "cache_mng.h"
+#include "hfs_stats_srv.h"
 
 #define APP_LOG "main"
 
@@ -46,6 +47,7 @@ struct _Application {
     struct event *sigpipe_ev;
     struct event *sigusr1_ev;
 
+    HfsStatsSrv *stats_srv;
 };
 
 // global variable, used by signals handlers
@@ -127,6 +129,11 @@ CacheMng *application_get_cache_mng (Application *app)
 const gchar *application_get_storage_url (Application *app)
 {
     return app->storage_url;
+}
+
+HfsStatsSrv *application_get_stats_srv (Application *app)
+{
+    return app->stats_srv;
 }
 
 /*}}}*/
@@ -247,6 +254,13 @@ static gint application_finish_initialization_and_run (Application *app)
     }
 /*}}}*/
 
+    app->stats_srv = hfs_stats_srv_create (app);
+    if (!app->stats_srv) {
+        LOG_err (APP_LOG, "Failed to create Stats Server !");
+        event_base_loopexit (app->evbase, NULL);
+        return -1;
+    }
+
     // set global App variable
     _app = app;
 
@@ -319,6 +333,8 @@ static void application_destroy (Application *app)
         client_pool_destroy (app->write_client_pool);
     if (app->ops_client_pool)
         client_pool_destroy (app->ops_client_pool);
+
+    hfs_stats_srv_destroy (app->stats_srv);
 
     if (app->dir_tree)
         dir_tree_destroy (app->dir_tree);

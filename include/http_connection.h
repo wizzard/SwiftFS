@@ -29,6 +29,9 @@ struct _HttpConnection {
 
     // additional output headers
     GList *l_output_headers;
+
+    // upload / download speed
+    HfsStatsSrv *stats_srv;
 };
 
 

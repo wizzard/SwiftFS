@@ -50,8 +50,7 @@
     <!-- maximum time of cached object, 10 min -->
     <cache_object_ttl type="uint">600</cache_object_ttl>
     <!-- segment size for upload / download files (5mb) -->
-    <!-- <segment_size type="uint">5242880</segment_size> -->
-    <segment_size type="uint">4242880</segment_size>
+    <segment_size type="uint">5242880</segment_size>
 </filesystem>
 
 <statistics>
