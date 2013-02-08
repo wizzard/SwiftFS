@@ -383,6 +383,8 @@ typedef struct {
     fuse_ino_t ino;
 
     struct evbuffer *segment_buf; // current segment buffer
+
+    gboolean small_file; // send HEAD and then GET for a full file
 } FileOpReadData;
 
 static void hfs_fileop_read_get_buffer (FileOpReadData *read_data);
@@ -412,6 +414,25 @@ static void hfs_fileop_read_on_read_cb (HttpConnection *con, void *ctx,
         return;
     }
 
+    //XXX: MD5
+    if (conf_get_boolean (fop->conf, "filesystem.md5_enabled")) {
+        const char *etag_header;
+
+        etag_header = evhttp_find_header (headers, "Etag");
+        if (etag_header) {
+            gchar *md5_sum;
+            md5_sum = get_md5_sum (buf, buf_len);
+            if (strcmp (etag_header, md5_sum) != 0) {
+                LOG_err (FOP_LOG, "Segment's MD5 sum doesn't match MD5 of received content !");
+                read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+                evbuffer_free (read_data->read_buf);
+                evbuffer_free (read_data->segment_buf);
+                g_free (read_data);
+            }  
+            g_free (md5_sum);
+        }
+    }
+    
     //decrypt
     if (conf_get_boolean (fop->conf, "encryption.enabled")) {
         out_len = buf_len;
@@ -423,15 +444,22 @@ static void hfs_fileop_read_on_read_cb (HttpConnection *con, void *ctx,
         out_len = buf_len;
     }
 
-    //XXX: MD5
-
-    // add buf to segment
-    evbuffer_add (read_data->segment_buf, out_buf, out_len);
     
     cache_mng_store_file_data (application_get_cache_mng (fop->app), 
         read_data->ino, out_len, read_data->segment_size * read_data->segment_id, (unsigned char *) out_buf);
 
-    hfs_fileop_read_get_buffer (read_data);
+    // a full file is received
+    if (read_data->small_file) {
+        // done 
+        read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)out_buf, out_len);
+        evbuffer_free (read_data->read_buf);
+        evbuffer_free (read_data->segment_buf);
+        g_free (read_data);
+    } else {
+        // add buf to segment
+        evbuffer_add (read_data->segment_buf, out_buf, out_len);
+        hfs_fileop_read_get_buffer (read_data);
+    }
 
     if (free_buf)
         g_free (out_buf);
@@ -451,9 +479,14 @@ static void hfs_fileop_read_on_con_cb (gpointer client, gpointer ctx)
 
     fop = read_data->fop;
 
-    // send segment buffer
-    req_path = g_strdup_printf ("/%s/%s/%zu", application_get_container_name (con->app), 
-        fop->fname, read_data->segment_id);
+    // get full file
+    if (read_data->small_file) 
+        req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), 
+            fop->fname);
+    // get segment
+    else        
+        req_path = g_strdup_printf ("/%s/%s/%zu", application_get_container_name (con->app), 
+            fop->fname, read_data->segment_id);
 
     res = http_connection_make_request_to_storage_url (con, 
         req_path, "GET", NULL,
@@ -572,7 +605,6 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
     } else {
         hfs_fileop_read_get_buffer (read_data);
     }
-
 }
 
 // manifest or a small file is retrieved
@@ -630,35 +662,18 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
 
         LOG_debug (FOP_LOG, "Downloading a small file");
 
-        //decrypt
-        if (conf_get_boolean (fop->conf, "encryption.enabled")) {
-            out_len = buf_len;
-            out_buf = hfs_encryption_decrypt (application_get_encryption (con->app), (unsigned char *)buf, &out_len);
-            free_buf = TRUE;
-            LOG_debug (FOP_LOG, "Decrypted, len: %zu inlen: %zd", out_len, buf_len);
-        } else {
-            out_buf = buf;
-            out_len = buf_len;
+        read_data->small_file = TRUE;
+
+        if (!client_pool_get_client (application_get_read_client_pool (fop->app), hfs_fileop_read_on_con_cb, read_data)) {
+            LOG_err (FOP_LOG, "Failed to get HTTP client !");
+
+            read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+            // free
+            evbuffer_free (read_data->read_buf);
+            evbuffer_free (read_data->segment_buf);
+            g_free (read_data);
+            return;
         }
-
-        //XXX: MD5
-
-        // add buf to segment
-        evbuffer_add (read_data->segment_buf, out_buf, out_len);
-        
-        cache_mng_store_file_data (application_get_cache_mng (fop->app), 
-            read_data->ino, out_len, 0, (unsigned char *) out_buf);
-
-        read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)out_buf, out_len);
-
-        // free
-        evbuffer_free (read_data->segment_buf);
-        evbuffer_free (read_data->read_buf);
-        g_free (read_data);
-
-
-        if (free_buf)
-            g_free (out_buf);
     }
 }
 
@@ -675,7 +690,8 @@ static void hfs_fileop_read_manifest_on_con_cb (gpointer client, gpointer ctx)
 
     fop = read_data->fop;
 
-    // 
+    // XXX: check cache first
+
     req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), 
         fop->fname);
 
@@ -719,6 +735,7 @@ void hfs_fileop_read_buffer (HfsFileOp *fop,
     read_data->segment_id = 0;
     read_data->ino = ino;
     read_data->segment_size = fop->segment_size;
+    read_data->small_file = FALSE;
 
     if (!fop->manifest_handled) {
         // get HTTP connection to download manifest or a small file

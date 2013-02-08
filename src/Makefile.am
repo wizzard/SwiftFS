@@ -16,6 +16,7 @@ hydrafs_SOURCES += cache_mng.c
 hydrafs_SOURCES += hfs_encryption.c
 hydrafs_SOURCES += utils.c
 hydrafs_SOURCES += hfs_range.c
+hydrafs_SOURCES += hfs_stats.c
 hydrafs_SOURCES += main.c
 
 hydrafs_CFLAGS = $(AM_CFLAGS) $(DEPS_CFLAGS)

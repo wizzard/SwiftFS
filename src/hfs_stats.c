@@ -41,7 +41,7 @@ static void hfs_stats_add_speed_bytes (SpeedEntry *a_speed, guint interval, guin
     SpeedEntry *sentry;
     time_t now = time (NULL);
 
-    sentry = a_speed[time % interval];
+   // sentry = a_speed[time % interval];
 }
 
 void hfs_stats_add_down_bytes (HfsStats *stats, guint32 bytes)

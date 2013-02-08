@@ -4,8 +4,6 @@
  */
 #include "utils.h"
 
-
-
 gchar *get_random_string (size_t len, gboolean readable)
 {
     gchar *out;

@@ -12,5 +12,6 @@ hfsinclude_HEADERS += http_connection.h
 hfsinclude_HEADERS += hfs_file_operation.h
 hfsinclude_HEADERS += hfs_encryption.h
 hfsinclude_HEADERS += cache_mng.h
-hfsinclude_HEADERS += utils.h
 hfsinclude_HEADERS += hfs_range.h
+hfsinclude_HEADERS += hfs_stats.h
+hfsinclude_HEADERS += utils.h

@@ -42,7 +42,7 @@
     <!-- set True to enable objects caching -->
     <cache_enabled type="boolean">True</cache_enabled>
     <!-- set True to enable calculating MD5 sum of file content, increases CPU load -->
-    <md5_enabled type="boolean">False</md5_enabled>
+    <md5_enabled type="boolean">True</md5_enabled>
     <!-- directory for storing cache objects -->
     <cache_dir type="string">/tmp/hydrafs</cache_dir>
     <!-- maximum size of cache directory -->
