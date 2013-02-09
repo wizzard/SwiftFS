@@ -380,6 +380,8 @@ int main (int argc, char *argv[])
     struct stat st;
 	int r;
     gchar **storage_url = NULL;
+    gboolean disable_stats = FALSE;
+    gboolean disable_cache = FALSE;
 
     conf_path = g_build_filename (SYSCONFDIR, "hydrafs.conf", NULL); 
     g_snprintf (conf_str, sizeof (conf_str), "Path to configuration file. Default: %s", conf_path);
@@ -389,6 +391,8 @@ int main (int argc, char *argv[])
 	    { "config", 'c', 0, G_OPTION_ARG_FILENAME_ARRAY, &s_config, conf_str, NULL},
         { "foreground", 'f', 0, G_OPTION_ARG_NONE, &foreground, "Flag. Do not daemonize process.", NULL },
         { "storage_url", 's', 0, G_OPTION_ARG_STRING_ARRAY, &storage_url, "Set storage URL (Storage URL returned by Auth server will be ignored).", NULL },
+        { "disable_cache", 0, 0, G_OPTION_ARG_NONE, &disable_cache, "Flag. Disable file caching.", NULL },
+        { "disable_stats", 0, 0, G_OPTION_ARG_NONE, &disable_stats, "Flag. Disable stats server.", NULL },
         { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose, "Verbose output.", NULL },
         { "version", 0, 0, G_OPTION_ARG_NONE, &version, "Show application version and exit.", NULL },
         { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
@@ -573,6 +577,13 @@ int main (int argc, char *argv[])
     // update logging settings
     logger_set_syslog (conf_get_boolean (app->conf, "log.use_syslog"));
 
+    // override if cmd arguments are set
+    if (disable_cache) {
+        conf_add_boolean (app->conf, "filesystem.cache_enabled", FALSE);
+    }
+    if (disable_stats) {
+        conf_add_boolean (app->conf, "statistics.enabled", FALSE);
+    }
 /*}}}*/
     
     // make sure tmp directory is accessible 

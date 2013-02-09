@@ -304,7 +304,7 @@ void conf_add_boolean (ConfData *conf, const gchar *full_path, gboolean val)
     conf_node->type = CT_BOOLEAN;
     conf_node->value = GINT_TO_POINTER (val);
 
-    g_hash_table_insert (conf->h_conf, conf_node->full_name, conf_node);
+    g_hash_table_replace (conf->h_conf, conf_node->full_name, conf_node);
 }
 
 gint32 conf_get_int (ConfData *conf, const gchar *path)
