@@ -12,10 +12,11 @@ class App ():
     def __init__(self):
         self.read_pid = None
         self.write_pid = None
-        self.tmp_dir = "/tmp/orig/"
+        self.src_dir = "/tmp/orig/"
+        self.dst_dir = "/tmp/dest/"
         self.write_dir = "/tmp/write/"
         self.read_dir = "/tmp/read/"
-        self.nr_tests = 10
+        self.nr_tests = 1
         self.l_files = []
         random.seed (time.time())
 
@@ -24,7 +25,7 @@ class App ():
         if pid == 0:
             base_path = os.path.join(os.path.dirname(__file__), '..')
             bin_path = os.path.join(base_path, "src")
-            args = [os.path.join(bin_path, "hydrafs"), "-v", "-f", "--disable_cache", "--disable_stats", "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
+            args = [os.path.join(bin_path, "hydrafs"), "-f", "--disable_cache", "--disable_stats", "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
             os.execv(args[0], args)
         else:
             return pid
@@ -46,7 +47,11 @@ class App ():
         except:
             None
         try:
-            os.mkdir (self.tmp_dir);
+            os.mkdir (self.src_dir);
+        except:
+            None
+        try:
+            os.mkdir (self.dst_dir);
         except:
             None
 
@@ -56,15 +61,29 @@ class App ():
         except:
             None
 
-        #self.write_pid = self.start_hydrafs (self.write_dir)
-        #self.read_pid = self.start_hydrafs (self.read_dir)
-
-        self.create_files ()
-
-        print self.l_files
-
-        #time.sleep (5)
+        self.write_pid = self.start_hydrafs (self.write_dir)
+        self.read_pid = self.start_hydrafs (self.read_dir)
         
+        print "Creating list of files .."
+        self.create_files ()
+        print "Done."
+
+        random.shuffle (self.l_files)
+
+        #print self.l_files
+
+        print "Checking files .."
+        failed = False
+        for entry in self.l_files:
+            res = self.check_file (entry)
+            if res == False:
+                print "Test failed !"
+                failed = True
+                break
+
+        if failed == False:
+            print "Test passed !"
+
         try:
             os.kill (self.write_pid, signal.SIGINT)
             os.kill (self.read_pid, signal.SIGINT)
@@ -79,7 +98,8 @@ class App ():
 
         shutil.rmtree (self.write_dir)
         shutil.rmtree (self.read_dir)
-        #shutil.rmtree (self.tmp_dir)
+        shutil.rmtree (self.src_dir)
+        shutil.rmtree (self.dst_dir)
 
 
     def create_file (self, fname, flen):
@@ -107,22 +127,46 @@ class App ():
         for i in range (0, self.nr_tests):
             fname = self.str_gen ()
             flen = random.randint (1, 1024 * 1024 * 5)
-            self.create_file (self.tmp_dir + fname, flen)
-            self.l_files.append ({"name":self.tmp_dir + fname, "len": flen, "md5": self.md5_for_file (self.tmp_dir + fname)})
+            self.create_file (self.src_dir + fname, flen)
+            self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
 
         # medium files 6mb - 20mb
         for i in range (0, self.nr_tests):
             fname = self.str_gen ()
             flen = random.randint (1024 * 1024 * 6, 1024 * 1024 * 20)
-            self.create_file (self.tmp_dir + fname, flen)
-            self.l_files.append ({"name":self.tmp_dir + fname, "len": flen, "md5": self.md5_for_file (self.tmp_dir + fname)})
+            self.create_file (self.src_dir + fname, flen)
+            self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
         
         # large files 30mb - 40mb
         for i in range (0, self.nr_tests):
             fname = self.str_gen ()
             flen = random.randint (1024 * 1024 * 30, 1024 * 1024 * 40)
-            self.create_file (self.tmp_dir + fname, flen)
-            self.l_files.append ({"name":self.tmp_dir + fname, "len": flen, "md5": self.md5_for_file (self.tmp_dir + fname)})
+            self.create_file (self.src_dir + fname, flen)
+            self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
+    
+    def check_file (self, entry):
+        out_src_name = self.write_dir + os.path.basename (entry["name"])
+        shutil.copy (entry["name"], out_src_name)
+        
+        in_dst_name = self.read_dir + os.path.basename (entry["name"])
+
+        # TEST
+        # shutil.copy (out_src_name, in_dst_name)
+
+        out_dst_name = self.dst_dir + os.path.basename (entry["name"])
+        try:
+            shutil.copy (in_dst_name, out_dst_name)
+        except:
+            return False
+        
+        md5 = self.md5_for_file (out_dst_name)
+
+        if md5 == entry["md5"]:
+            print "Files match: ", entry["md5"], " == ", md5
+            return True
+        else:
+            print "Files DOES NOT match: ", entry["md5"], " != ", md5
+            return False
 
 
 if __name__ == "__main__":
