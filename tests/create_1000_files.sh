@@ -3,7 +3,7 @@
 #Create 1000 files
 # usage: ./create_1000_files.sh mountpoint
 
-for i in $(seq 1 100)
+for i in $(seq 1 10)
 do
     echo $i > $1/$i
 done

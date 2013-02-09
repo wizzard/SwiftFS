@@ -1,3 +1,7 @@
+# Copyright (C) 2012-2013 Paul Ionkin <paul.ionkin@gmail.com>
+# This file is subject to the terms and conditions defined in
+# file 'LICENSE.txt', which is part of this source code package.
+#
 import sys
 import os
 import time
@@ -20,12 +24,13 @@ class App ():
         self.l_files = []
         random.seed (time.time())
 
-    def start_hydrafs (self, mnt_dir):
-        pid = os.fork()
+    def start_hydrafs (self, mnt_dir, log_file):
+        pid = os.fork ()
         if pid == 0:
             base_path = os.path.join(os.path.dirname(__file__), '..')
             bin_path = os.path.join(base_path, "src")
-            args = [os.path.join(bin_path, "hydrafs"), "-f", "--disable_cache", "--disable_stats", "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
+            args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", "--disable_cache", "--disable_stats", "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
+            sys.stdout = open (log_file, 'w')
             os.execv(args[0], args)
         else:
             return pid
@@ -61,8 +66,8 @@ class App ():
         except:
             None
 
-        self.write_pid = self.start_hydrafs (self.write_dir)
-        self.read_pid = self.start_hydrafs (self.read_dir)
+        self.write_pid = self.start_hydrafs (self.write_dir, "./write.log")
+        self.read_pid = self.start_hydrafs (self.read_dir, "./read.log")
         
         print "Creating list of files .."
         self.create_files ()
@@ -85,10 +90,13 @@ class App ():
             print "Test passed !"
 
         try:
+            print "Killing processes .."
             os.kill (self.write_pid, signal.SIGINT)
             os.kill (self.read_pid, signal.SIGINT)
         except:
             None
+
+        time.sleep (2)
 
         try:
             unmount (self.write_dir)
@@ -154,6 +162,16 @@ class App ():
         # shutil.copy (out_src_name, in_dst_name)
 
         out_dst_name = self.dst_dir + os.path.basename (entry["name"])
+        
+        # write can take some extra time (due file release does not wait)
+        for i in range (0, 10):
+            try:
+                with open(in_dst_name) as f: pass
+                break;
+            except:
+                print "File not found, sleeping ..", in_dst_name
+                time.sleep (5)
+
         try:
             shutil.copy (in_dst_name, out_dst_name)
         except:

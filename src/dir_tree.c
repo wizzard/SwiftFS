@@ -18,6 +18,7 @@ typedef struct {
     gchar *basename;
     gchar *fullpath;
     guint64 age;
+    gboolean removed;
     
     // type of directory entry
     DirEntryType type;
@@ -168,6 +169,7 @@ static DirEntry *dir_tree_add_entry (DirTree *dtree, const gchar *basename, mode
     en->type = type;
     en->ctime = ctime;
     en->is_modified = FALSE;
+    en->removed = FALSE;
 
     // cache is empty
     en->dir_cache = NULL;
@@ -564,7 +566,7 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
     }
     
     // file is removed
-    if (en->age == 0) {
+    if (en->removed) {
         LOG_debug (DIR_TREE_LOG, "Entry '%s' is removed !", name);
         lookup_cb (req, FALSE, 0, 0, 0, 0);
         return;
@@ -998,7 +1000,7 @@ static void dir_tree_file_remove_on_con_data_cb (HttpConnection *con, gpointer c
 {
     FileRemoveData *data = (FileRemoveData *) ctx;
     
-    data->en->age = 0;
+    data->en->removed = TRUE;
     dir_tree_entry_modified (data->dtree, data->en);
 
     if (data->file_remove_cb)
