@@ -9,14 +9,19 @@ typedef struct {
     time_t time;
 } SpeedEntry;
 
-#define STATS_INTERVAL_SECS 10
+#define STATS_INTERVAL_SECS 5
+#define STATS_LOG "stats"
 
 struct _HfsStatsSrv {
     Application *app;
+    ConfData *conf;
+    struct evhttp *http;
 
     SpeedEntry a_down_speed[STATS_INTERVAL_SECS]; // list of SpeedEntry for downloading
     SpeedEntry a_up_speed[STATS_INTERVAL_SECS]; // list of SpeedEntry for uploading
 };
+
+static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg);
 
 HfsStatsSrv *hfs_stats_srv_create (Application *app)
 {
@@ -24,6 +29,24 @@ HfsStatsSrv *hfs_stats_srv_create (Application *app)
 
     srv = g_new0 (HfsStatsSrv, 1);
     srv->app = app;
+    srv->conf = application_get_conf (app);
+
+    if (conf_get_boolean (srv->conf, "statistics.enabled")) {
+        gint port;
+        struct evhttp_bound_socket *handle;
+
+        srv->http = evhttp_new (application_get_evbase (app));
+
+        evhttp_set_cb (srv->http, "/stats", hfs_stats_srv_on_stats_cb, srv);
+
+        port = conf_get_int (srv->conf, "statistics.port");
+        handle = evhttp_bind_socket_with_handle (srv->http, "0.0.0.0", port);
+        if (!handle) {
+            LOG_err (STATS_LOG, "Failed to bind socket to port %d", port);
+            return NULL;
+        }
+
+    }
 
     return srv;
 }
@@ -50,38 +73,107 @@ static guint32 hfs_stats_srv_get_speed (SpeedEntry *a_speed)
     guint32 i;
     time_t now = time (NULL);
     guint32 sum = 0;
-    guint32 items = 0;
+    guint items = 0;
 
     for (i = 0; i < STATS_INTERVAL_SECS; i++) {
-        if (a_speed[i].time && now - STATS_INTERVAL_SECS <= a_speed[i].time) {
-            items ++;
+        if (a_speed[i].time && now - a_speed[i].time <= STATS_INTERVAL_SECS) {
             sum += a_speed[i].bytes;
+            items ++;
         }
     }
 
-    if (items)
+    if (sum)
         return (guint32) sum / items;
     else
         return 0;
 }
 
-void hfs_stats_srv_add_down_bytes (HfsStats *stats, guint32 bytes)
+#define MB (1024 * 1024)
+#define KB (1024)
+static const gchar *hfs_stats_srv_get_speed_str (SpeedEntry *a_speed)
 {
-    hfs_stats_srv_add_speed_bytes (stats->a_down_speed, bytes);
+    guint32 bps;
+    static gchar out[20];
+    gdouble tmp;
+
+    bps = hfs_stats_srv_get_speed (a_speed);
+
+    if (bps >= MB) {
+        tmp = (gdouble)bps / MB;
+        g_snprintf (out, sizeof (out), "%.2fMb/s", tmp);
+    } else {
+        tmp = (gdouble)bps / KB;
+        g_snprintf (out, sizeof (out), "%.2fKb/s", tmp);
+    }
+
+    return out;
 }
 
-guint32 hfs_stats_srv_get_down_speed (HfsStats *stats)
+
+void hfs_stats_srv_add_down_bytes (HfsStatsSrv *srv, guint32 bytes)
 {
-    return hfs_stats_srv_get_speed (stats->a_down_speed);
+    hfs_stats_srv_add_speed_bytes (srv->a_down_speed, bytes);
 }
 
-void hfs_stats_srv_add_up_bytes (HfsStats *stats, guint32 bytes)
+guint32 hfs_stats_srv_get_down_speed (HfsStatsSrv *srv)
 {
-    hfs_stats_srv_add_speed_bytes (stats->a_up_speed, bytes);
+    return hfs_stats_srv_get_speed (srv->a_down_speed);
 }
 
-guint32 hfs_stats_srv_get_up_speed (HfsStats *stats)
+const gchar *hfs_stats_srv_get_down_speed_str (HfsStatsSrv *srv)
 {
-    return hfs_stats_srv_get_speed (stats->a_up_speed);
+    return hfs_stats_srv_get_speed_str (srv->a_down_speed);
 }
 
+
+void hfs_stats_srv_add_up_bytes (HfsStatsSrv *srv, guint32 bytes)
+{
+    hfs_stats_srv_add_speed_bytes (srv->a_up_speed, bytes);
+}
+
+guint32 hfs_stats_srv_get_up_speed (HfsStatsSrv *srv)
+{
+    return hfs_stats_srv_get_speed (srv->a_up_speed);
+}
+
+const gchar *hfs_stats_srv_get_up_speed_str (HfsStatsSrv *srv)
+{
+    return hfs_stats_srv_get_speed_str (srv->a_up_speed);
+}
+
+static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg)
+{
+    HfsStatsSrv *srv = (HfsStatsSrv *) arg;
+    struct evbuffer *evb = NULL;
+    const gchar *refresh = NULL;
+    gint ref = 0;
+    const gchar *query;
+
+    query = evhttp_uri_get_query (evhttp_request_get_evhttp_uri (req));
+    if (query) {
+        struct evkeyvalq q_params;
+        TAILQ_INIT (&q_params);
+        evhttp_parse_query_str (query, &q_params);
+        refresh = evhttp_find_header (&q_params, "refresh");
+        ref = atoi (refresh);
+        evhttp_clear_headers (&q_params);
+    }
+
+    evb = evbuffer_new ();
+
+    if (refresh) {
+        evbuffer_add_printf (evb, "<meta http-equiv=\"refresh\" content=\"%d\">", ref);
+    }
+
+    {
+        gchar down_speed[20];
+        strcpy (down_speed, hfs_stats_srv_get_down_speed_str (srv));
+        evbuffer_add_printf (evb, "Down: %s Up: %s",
+            down_speed,
+            hfs_stats_srv_get_up_speed_str (srv)
+        );
+    }
+
+    evhttp_send_reply (req, 200, "OK", evb);
+    evbuffer_free (evb);
+}

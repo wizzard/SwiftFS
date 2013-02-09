@@ -719,7 +719,7 @@ void dir_tree_getattr (DirTree *dtree, fuse_ino_t ino,
 {
     DirEntry  *en;
     
-    LOG_err (DIR_TREE_LOG, "Getting attributes for %d", ino);
+    LOG_debug (DIR_TREE_LOG, "Getting attributes for %d", ino);
     
     en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (ino));
     

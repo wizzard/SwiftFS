@@ -10,10 +10,10 @@
 HfsStatsSrv *hfs_stats_srv_create (Application *app);
 void hfs_stats_srv_destroy (HfsStatsSrv *srv);
 
-void hfs_stats_srv_add_down_bytes (HfsStats *stats, guint32 bytes);
-void hfs_stats_srv_add_up_bytes (HfsStats *stats, guint32 bytes);
+void hfs_stats_srv_add_down_bytes (HfsStatsSrv *srv, guint32 bytes);
+void hfs_stats_srv_add_up_bytes (HfsStatsSrv *srv, guint32 bytes);
 
-guint32 hfs_stats_srv_get_down_speed (HfsStats *stats);
-guint32 hfs_stats_srv_get_up_speed (HfsStats *stats);
+guint32 hfs_stats_srv_get_down_speed (HfsStatsSrv *srv);
+guint32 hfs_stats_srv_get_up_speed (HfsStatsSrv *srv);
 
 #endif

@@ -254,12 +254,6 @@ static gint application_finish_initialization_and_run (Application *app)
     }
 /*}}}*/
 
-    app->stats_srv = hfs_stats_srv_create (app);
-    if (!app->stats_srv) {
-        LOG_err (APP_LOG, "Failed to create Stats Server !");
-        event_base_loopexit (app->evbase, NULL);
-        return -1;
-    }
 
     // set global App variable
     _app = app;
@@ -450,19 +444,7 @@ int main (int argc, char *argv[])
     else
         log_level = LOG_msg;
 
-    // check if --version is specified
-    if (version) {
-            g_fprintf (stdout, "HydraFS File System v%s\n", VERSION);
-            g_fprintf (stdout, "Copyright (C) 2012-2013 Paul Ionkin <paul.ionkin@gmail.com>\n");
-            g_fprintf (stdout, "\nLibraries:\n");
-            g_fprintf (stdout, " GLib: %d.%d.%d   libevent: %s  fuse: %d.%d  glibc: %s\n", 
-                    GLIB_MAJOR_VERSION, GLIB_MINOR_VERSION, GLIB_MICRO_VERSION, 
-                    LIBEVENT_VERSION,
-                    FUSE_MAJOR_VERSION, FUSE_MINOR_VERSION,
-                    gnu_get_libc_version ()
-            );
-        return 0;
-    }
+
     
     // get access parameters from the environment
     app->auth_user = getenv ("HydraFS_USER");
@@ -512,7 +494,6 @@ int main (int argc, char *argv[])
     g_strfreev (s_params);
 
     app->foreground = foreground;
-
     
     g_option_context_free (context);
 /*}}}*/
@@ -531,7 +512,8 @@ int main (int argc, char *argv[])
     // parse conf file
     if (stat (conf_path, &st) == -1) {
         // set default values
-        LOG_msg (APP_LOG, "Configuration file not found, using default settings.");
+        if (!version)
+            LOG_msg (APP_LOG, "Configuration file not found, using default settings.");
         
         conf_add_boolean (app->conf, "log.use_syslog", FALSE);
         
@@ -559,13 +541,30 @@ int main (int argc, char *argv[])
         conf_add_boolean (app->conf, "statistics.enabled", TRUE);
         conf_add_int (app->conf, "statistics.port", 8011);
     } else {
-        LOG_debug (APP_LOG, "Loading configuration file: %s", conf_path);
+        if (!version)
+            LOG_debug (APP_LOG, "Loading configuration file: %s", conf_path);
         if (!conf_parse_file (app->conf, conf_path)) {
             LOG_err (APP_LOG, "Failed to parse configuration file: %s", conf_path);
             return -1;
         }
     }
     g_free (conf_path);
+
+    // check if --version is specified
+    if (version) {
+            g_fprintf (stdout, "HydraFS File System v%s\n", VERSION);
+            g_fprintf (stdout, "Copyright (C) 2012-2013 Paul Ionkin <paul.ionkin@gmail.com>\n");
+            g_fprintf (stdout, "\nLibraries:\n");
+            g_fprintf (stdout, " GLib: %d.%d.%d   libevent: %s  fuse: %d.%d  glibc: %s\n", 
+                    GLIB_MAJOR_VERSION, GLIB_MINOR_VERSION, GLIB_MICRO_VERSION, 
+                    LIBEVENT_VERSION,
+                    FUSE_MAJOR_VERSION, FUSE_MINOR_VERSION,
+                    gnu_get_libc_version ()
+            );
+            g_fprintf (stdout, "\nFeatures:\n");
+            g_fprintf (stdout, " Cache enabled: %s\n", conf_get_boolean (app->conf, "filesystem.cache_enabled") ? "True" : "False");
+        return 0;
+    }
 
     // add auth data to conf
     conf_add_string (app->conf, "auth.user", app->auth_user);
@@ -602,6 +601,13 @@ int main (int argc, char *argv[])
     app->auth_client = auth_client_create (app, app->auth_uri);
     if (!app->auth_client) {
         LOG_err (APP_LOG, "Failed to create AuthClient !");
+        event_base_loopexit (app->evbase, NULL);
+        return -1;
+    }
+
+    app->stats_srv = hfs_stats_srv_create (app);
+    if (!app->stats_srv) {
+        LOG_err (APP_LOG, "Failed to create Stats Server !");
         event_base_loopexit (app->evbase, NULL);
         return -1;
     }
