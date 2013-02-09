@@ -83,7 +83,7 @@ static guint32 hfs_stats_srv_get_speed (SpeedEntry *a_speed)
     }
 
     if (sum)
-        return (guint32) sum / items;
+        return (guint32) ((gdouble)sum / (gdouble)STATS_INTERVAL_SECS);
     else
         return 0;
 }
@@ -99,10 +99,10 @@ static const gchar *hfs_stats_srv_get_speed_str (SpeedEntry *a_speed)
     bps = hfs_stats_srv_get_speed (a_speed);
 
     if (bps >= MB) {
-        tmp = (gdouble)bps / MB;
+        tmp = (gdouble)bps / (gdouble)MB;
         g_snprintf (out, sizeof (out), "%.2fMb/s", tmp);
     } else {
-        tmp = (gdouble)bps / KB;
+        tmp = (gdouble)bps / (gdouble)KB;
         g_snprintf (out, sizeof (out), "%.2fKb/s", tmp);
     }
 

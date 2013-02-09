@@ -7,6 +7,7 @@
 #include "http_connection.h"
 #include "client_pool.h"
 #include "auth_client.h"
+#include "hfs_stats_srv.h"
 
 // 1. Create 100 files, fill with random data, get MD5 sum
 // 2. Start HTTP server
@@ -40,6 +41,7 @@ struct _Application {
     struct evdns_base *dns_base;
     ConfData *conf;
     struct evhttp *http;
+    HfsStatsSrv *stats;
 
     AuthClient *auth_client;
 
@@ -425,6 +427,11 @@ const gchar *application_get_storage_url (Application *app)
     return NULL;
 }
 
+HfsStatsSrv *application_get_stats_srv (Application *app)
+{
+    return app->stats;
+}
+
 /*}}}*/
 
 int main (int argc, char *argv[])
@@ -470,13 +477,15 @@ int main (int argc, char *argv[])
         conf_add_string (app->conf, "filesystem.cache_dir", "/tmp/hydrafs");
         conf_add_string (app->conf, "filesystem.cache_dir_max_size", "1Gb");
 
-        conf_add_boolean (app->conf, "statistics.enabled", TRUE);
+        conf_add_boolean (app->conf, "statistics.enabled", FALSE);
         conf_add_int (app->conf, "statistics.port", 8011);
 
     conf_add_string (app->conf, "auth.user", "test");
     conf_add_string (app->conf, "auth.key", "test");
     uri = evhttp_uri_parse ("http://127.0.0.1:8011/get_auth");
     app->auth_client = auth_client_create (app, uri);
+
+    app->stats = hfs_stats_srv_create (app);
 
     l_files = populate_file_list (app->files_count, l_files, in_dir);
     g_assert (l_files);
