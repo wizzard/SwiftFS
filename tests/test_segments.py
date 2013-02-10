@@ -16,20 +16,26 @@ class App ():
     def __init__(self):
         self.read_pid = None
         self.write_pid = None
-        self.src_dir = "/tmp/orig/"
-        self.dst_dir = "/tmp/dest/"
-        self.write_dir = "/tmp/write/"
-        self.read_dir = "/tmp/read/"
-        self.nr_tests = 1
+        self.base_dir = "/tmp/test_segments/"
+        self.src_dir = "/tmp/test_segments/orig/"
+        self.dst_dir = "/tmp/test_segments/dest/"
+        self.write_dir = "/tmp/test_segments/write/"
+        self.write_cache_dir = "/tmp/test_segments/write_cache/"
+        self.read_dir = "/tmp/test_segments/read/"
+        self.read_cache_dir = "/tmp/test_segments/read_cache/"
+        self.nr_tests = 20
         self.l_files = []
         random.seed (time.time())
 
-    def start_hydrafs (self, mnt_dir, log_file):
+    def start_hydrafs (self, mnt_dir, log_file, cache_dir):
         pid = os.fork ()
         if pid == 0:
             base_path = os.path.join(os.path.dirname(__file__), '..')
             bin_path = os.path.join(base_path, "src")
-            args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", "--disable_cache", "--disable_stats", "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
+            #cache = "--cache_dir=" + cache_dir
+            cache = "--disable_cache"
+            #args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", "--disable_cache", "--disable_stats", "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
+            args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", cache, "--disable_stats", "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
             sys.stdout = open (log_file, 'w')
             os.execv(args[0], args)
         else:
@@ -44,30 +50,30 @@ class App ():
 
     def run (self):
         try:
-            os.mkdir (self.write_dir);
-        except:
-            None
-        try:
-            os.mkdir (self.read_dir);
-        except:
-            None
-        try:
-            os.mkdir (self.src_dir);
-        except:
-            None
-        try:
-            os.mkdir (self.dst_dir);
+            shutil.rmtree (self.base_dir)
         except:
             None
 
+        try:
+            os.mkdir (self.base_dir);
+            os.mkdir (self.write_dir);
+            os.mkdir (self.read_dir);
+            os.mkdir (self.src_dir);
+            os.mkdir (self.dst_dir);
+            os.mkdir (self.write_cache_dir);
+            os.mkdir (self.read_cache_dir);
+        except:
+            print "Failed to create temp dirs !"
+            return
+        
         try:
             unmount (self.write_dir)
             unmount (self.read_dir)
         except:
             None
 
-        self.write_pid = self.start_hydrafs (self.write_dir, "./write.log")
-        self.read_pid = self.start_hydrafs (self.read_dir, "./read.log")
+        self.write_pid = self.start_hydrafs (self.write_dir, "./write.log", self.write_cache_dir)
+        self.read_pid = self.start_hydrafs (self.read_dir, "./read.log", self.read_cache_dir)
         
         print "Creating list of files .."
         self.create_files ()
@@ -103,11 +109,12 @@ class App ():
             unmount (self.read_dir)
         except:
             None
-
-        shutil.rmtree (self.write_dir)
-        shutil.rmtree (self.read_dir)
-        shutil.rmtree (self.src_dir)
-        shutil.rmtree (self.dst_dir)
+        
+        if failed == False:
+            try:
+                shutil.rmtree (self.base_dir)
+            except:
+                None
 
 
     def create_file (self, fname, flen):
@@ -183,7 +190,7 @@ class App ():
             print "Files match: ", entry["md5"], " == ", md5
             return True
         else:
-            print "Files DOES NOT match: ", entry["md5"], " != ", md5
+            print "Files (", entry["name"], ") DOES NOT match: ", entry["md5"], " != ", md5
             return False
 
 

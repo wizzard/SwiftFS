@@ -380,6 +380,7 @@ int main (int argc, char *argv[])
     struct stat st;
 	int r;
     gchar **storage_url = NULL;
+    gchar **cache_dir = NULL;
     gboolean disable_stats = FALSE;
     gboolean disable_cache = FALSE;
 
@@ -392,6 +393,7 @@ int main (int argc, char *argv[])
         { "foreground", 'f', 0, G_OPTION_ARG_NONE, &foreground, "Flag. Do not daemonize process.", NULL },
         { "storage_url", 's', 0, G_OPTION_ARG_STRING_ARRAY, &storage_url, "Set storage URL (Storage URL returned by Auth server will be ignored).", NULL },
         { "disable_cache", 0, 0, G_OPTION_ARG_NONE, &disable_cache, "Flag. Disable file caching.", NULL },
+        { "cache_dir", 0, 0, G_OPTION_ARG_STRING_ARRAY, &cache_dir, "Set cache directory.", NULL },
         { "disable_stats", 0, 0, G_OPTION_ARG_NONE, &disable_stats, "Flag. Disable stats server.", NULL },
         { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose, "Verbose output.", NULL },
         { "version", 0, 0, G_OPTION_ARG_NONE, &version, "Show application version and exit.", NULL },
@@ -584,6 +586,12 @@ int main (int argc, char *argv[])
     if (disable_stats) {
         conf_add_boolean (app->conf, "statistics.enabled", FALSE);
     }
+
+    if (cache_dir && g_strv_length (cache_dir) > 0) {
+        conf_add_string (app->conf, "filesystem.cache_dir", cache_dir[0]);
+        g_strfreev (cache_dir);
+    }
+
 /*}}}*/
     
     // make sure tmp directory is accessible 

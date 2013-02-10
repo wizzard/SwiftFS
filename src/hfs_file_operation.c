@@ -23,6 +23,7 @@ struct _HfsFileOp {
 
     gboolean manifest_handled; // set TRUE if manifest file is downloaded / uploaded
     gboolean small_file; // send HEAD and then GET for a full file
+    
     guint64 full_object_size;
 };
 /*}}}*/
@@ -532,12 +533,18 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
     // current segment buf length
     segment_len = evbuffer_get_length (read_data->segment_buf);
 
-    if (fop->small_file) {
-        if (read_data->current_off + read_data->req_size > fop->full_object_size)
-            if (read_data->current_off > fop->full_object_size)
-                read_data->req_size = 0;
-            else
-                read_data->req_size = fop->full_object_size  - read_data->current_off;
+    // update the last segment request
+    if (read_data->current_off + read_data->req_size > fop->full_object_size) {
+        LOG_err (FOP_LOG, "Updating request size, object size: %lu", fop->full_object_size);
+        if (read_data->current_off > fop->full_object_size)
+            read_data->req_size = 0;
+        else {
+            read_data->req_size = fop->full_object_size  - read_data->current_off;
+        }
+        
+        read_data->size_left  = read_data->req_size;
+
+    } else {
     }
 
     LOG_debug (FOP_LOG, "current segment: %zu, segment len: %zu,  requested segment: %zu, req size: %zu, got so far: %zu of %zu, current off: %zu",
@@ -549,6 +556,7 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
     // retrieve from cache
     buf = cache_mng_retr_file_data (application_get_cache_mng (fop->app), 
         read_data->ino, read_data->size_left, read_data->current_off);
+
     if (buf) {
         // empty buffer
         evbuffer_drain (read_data->segment_buf, -1);
@@ -642,6 +650,7 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
     unsigned char *out_buf;
     int out_len;
     const char *manifest_header;
+    const char *size_header;
 
     LOG_debug (FOP_LOG, "Got %zu bytes for manifest: %zu", buf_len, read_data->segment_id);
 
@@ -651,6 +660,18 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
 
     if (!success) {
         LOG_err (FOP_LOG, "Failed to retrieve segment !");
+        read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+        evbuffer_free (read_data->read_buf);
+        evbuffer_free (read_data->segment_buf);
+        g_free (read_data);
+        return;
+    }
+
+    size_header = evhttp_find_header (headers, "Content-Length");
+    if (size_header) {
+        fop->full_object_size = strtoll ((char *)size_header, NULL, 10);
+    } else {
+        LOG_err (FOP_LOG, "Failed to retrieve header !");
         read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
         evbuffer_free (read_data->read_buf);
         evbuffer_free (read_data->segment_buf);
@@ -683,23 +704,9 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
         hfs_fileop_read_get_buffer (read_data);
     // a small file
     } else {
-        const char *size_header = evhttp_find_header (headers, "Content-Length");
 
         LOG_debug (FOP_LOG, "Downloading a small file");
         
-        if (size_header) {
-            fop->full_object_size = strtoll ((char *)size_header, NULL, 10);
-        } else {
-            LOG_err (FOP_LOG, "Failed to retrieve header !");
-            read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
-            evbuffer_free (read_data->read_buf);
-            evbuffer_free (read_data->segment_buf);
-            g_free (read_data);
-            return;
-        }
-
-        
-
         fop->small_file = TRUE;
 
         if (!client_pool_get_client (application_get_read_client_pool (fop->app), hfs_fileop_read_on_con_cb, read_data)) {
@@ -752,6 +759,28 @@ static void hfs_fileop_read_manifest_on_con_cb (gpointer client, gpointer ctx)
     }
 }
 
+// 1. If it is the very first read() request:
+    // 1a. Send HEAD request to get ContentSize header and determine if requested file contains of a segments
+    // 1b. if Head returns Manifest - determine Segment file size, same Manifest path
+// 2. At this point we have the following information:
+    // 2a. "request size" (could exceed the full object size)
+    // 2b. "request offset"
+    // 2c. "full object size" and "segment size"
+// 3. Check that ("request size" + "request offset") <= "full object size", correct "request size" if needed
+// 4. Request selected range from Cache manager
+    // 4a. Return buffer if it's found in Cache manager
+// 5. If requested object is not a Manifest - mark that we need a full object
+// 6. Determine which segment has the start of requested range:  "segment id" = "requested offset" / "segment size"
+// 7. Send request
+// 8. On response:
+// 9. Decrypt buffer
+// 10. Add buffer to Cache manager
+// 11. if received buffer has requested range. Return it
+// 12. if received buffer has a part of requested range:
+// 12a. save part in "segment buffer"
+// 12b. correct "request offset"
+// 12c. correct "request size"
+// 12d. goto step #4
 
 // Init read_data and call loop functioin
 void hfs_fileop_read_buffer (HfsFileOp *fop,

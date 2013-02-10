@@ -275,7 +275,7 @@ void conf_add_string (ConfData *conf, const gchar *full_path, const gchar *val)
     conf_node->type = CT_STRING;
     conf_node->value = g_strdup (val);
 
-    g_hash_table_insert (conf->h_conf, conf_node->full_name, conf_node);
+    g_hash_table_replace (conf->h_conf, conf_node->full_name, conf_node);
 }
 
 gboolean conf_get_boolean (ConfData *conf, const gchar *path)
