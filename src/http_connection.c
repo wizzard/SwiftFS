@@ -193,12 +193,18 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
     struct evbuffer *inbuf;
     const char *buf;
     size_t buf_len;
+    HfsStatsSrv *stats;
 
     if (!req) {
         LOG_err (CON_LOG, "[%p] Request failed !", data->con);
         if (data->response_cb)
             data->response_cb (data->con, data->ctx, NULL, 0, NULL, FALSE);
         goto done;
+    }
+
+    stats = application_get_stats_srv (data->con->app);
+    if (stats) {
+        hfs_stats_srv_set_storage_srv_status (stats, evhttp_request_get_response_code (req), req->response_code_line);
     }
 
     // XXX: handle redirect

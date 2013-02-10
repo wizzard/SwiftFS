@@ -55,7 +55,7 @@ struct _DirTree {
 
 #define DIR_TREE_LOG "dir_tree"
 #define DIR_DEFAULT_MODE S_IFDIR | 0755
-#define FILE_DEFAULT_MODE S_IFREG | 0444
+#define FILE_DEFAULT_MODE S_IFREG | 0644
 /*}}}*/
 
 /*{{{ func declarations */
@@ -558,7 +558,7 @@ static void dir_tree_lookup_on_not_found_data_cb (HttpConnection *con, void *ctx
     DirEntry *en;
     time_t last_modified = time (NULL);
     DirEntry *parent_en;
-    long long size;
+    long long size = 0;
     gboolean is_segmented = FALSE;
     
     LOG_debug (DIR_TREE_LOG, "Got attributes for ino: %"INO_FMT, op_data->ino);
@@ -705,7 +705,7 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
         op_data->parent_ino = parent_ino;
         op_data->name = g_strdup (name);
 
-        LOG_debug (DIR_TREE_LOG, "Entry not found, requesting for attributes, name: %s", name);
+        LOG_debug (DIR_TREE_LOG, "Entry not found, sending request to storage server, name: %s", name);
 
         if (!client_pool_get_client (application_get_ops_client_pool (dtree->app), dir_tree_lookup_on_not_found_con_cb, op_data)) {
             LOG_err (DIR_TREE_LOG, "Failed to get HTTP client !");
@@ -726,6 +726,7 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
     LOG_debug (DIR_TREE_LOG, "segmented: %d  updating: %d", en->is_segmented, en->is_updating);
 
     // get extra info for segmented file
+    /*
     if (en->is_segmented && !en->is_updating) {
         LookupOpData *op_data;
 
@@ -751,6 +752,7 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
 
         return;
     }
+    */
 
     // hide it
     if (en->is_modified) {
@@ -1237,6 +1239,32 @@ void dir_tree_file_remove (DirTree *dtree, fuse_ino_t ino, DirTree_file_remove_c
     client_pool_get_client (application_get_ops_client_pool (dtree->app),
         dir_tree_file_remove_on_con_cb, data);
 }
+
+void dir_tree_file_unlink (DirTree *dtree, fuse_ino_t parent_ino, const char *name, DirTree_file_remove_cb file_remove_cb, fuse_req_t req)
+{
+    DirEntry *en, *parent_en;
+    FileRemoveData *data;
+    
+    LOG_debug (DIR_TREE_LOG, "Unlinking %s", name);
+
+    parent_en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (parent_ino));
+    if (!parent_en) {
+        LOG_err (DIR_TREE_LOG, "Parent not found: %"INO_FMT, parent_ino);
+        file_remove_cb (req, FALSE);
+        return;
+    }
+
+    en = g_hash_table_lookup (parent_en->h_dir_tree, name);
+    if (!en) {
+        LOG_err (DIR_TREE_LOG, "Parent not found: %"INO_FMT, parent_ino);
+        file_remove_cb (req, FALSE);
+        return;
+
+    }
+
+    dir_tree_file_remove (dtree, en->ino, file_remove_cb, req);
+}
+
 /*}}}*/
 
 /*{{{ dir_tree_dir_remove */

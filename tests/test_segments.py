@@ -23,8 +23,10 @@ class App ():
         self.write_cache_dir = "/tmp/test_segments/write_cache/"
         self.read_dir = "/tmp/test_segments/read/"
         self.read_cache_dir = "/tmp/test_segments/read_cache/"
-        self.nr_tests = 10
+        self.nr_tests = 20
         self.l_files = []
+        #self.segment_size = 5242880
+        self.segment_size = "2034"
         random.seed (time.time())
 
     def start_hydrafs (self, mnt_dir, log_file, cache_dir):
@@ -35,7 +37,7 @@ class App ():
             cache = "--cache_dir=" + cache_dir
             #cache = "--disable_cache"
             #args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", "--disable_cache", "--disable_stats", "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
-            args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", cache, "--disable_stats", "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
+            args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", cache, "--disable_stats", "--segment_size", self.segment_size, "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
             sys.stdout = open (log_file, 'w')
             os.execv(args[0], args)
         else:

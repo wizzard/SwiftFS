@@ -3,6 +3,7 @@
  * file 'LICENSE.txt', which is part of this source code package.
  */
 #include "auth_client.h"
+#include "hfs_stats_srv.h"
 
 #define AUTH_LOG "auth"
 
@@ -200,6 +201,7 @@ static void auth_client_on_response_cb (struct evhttp_request *req, void *ctx)
     const gchar *auth_token;
     struct evkeyvalq *headers;
     gboolean success = FALSE;
+    HfsStatsSrv *stats;
 
     if (!req) {
         LOG_err (AUTH_LOG, "Request failed !");
@@ -207,6 +209,11 @@ static void auth_client_on_response_cb (struct evhttp_request *req, void *ctx)
     }
     
     LOG_debug (AUTH_LOG, "Got HTTP response (code: %d) from Auth server !", evhttp_request_get_response_code (req));
+
+    stats = application_get_stats_srv (auth_client->app);
+    if (stats) {
+        hfs_stats_srv_set_auth_srv_status (stats, evhttp_request_get_response_code (req), req->response_code_line);
+    }
 
     // XXX: handle redirect
     // only 200 HTTP code is accepted

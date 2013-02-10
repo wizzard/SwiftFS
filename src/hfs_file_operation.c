@@ -17,7 +17,8 @@ struct _HfsFileOp {
     gboolean write_called; // set TRUE if write operations were called (need to upload manifest)
 
     gboolean released; // a simple version of ref counter.
-    size_t current_size; // total bytes after read / write calls
+    size_t current_size; // total bytes after read / write calls (encrypted)
+    size_t current_size_orig; // total bytes after read / write calls (original)
     struct evbuffer *segment_buf; // current segment buffer
     size_t segment_count; // current count of segments uploaded / downloaded
     gboolean manifest_handled; // TRUE if manifest file was sent
@@ -44,6 +45,7 @@ HfsFileOp *hfs_fileop_create (Application *app, const gchar *fname)
     fop->segment_size = conf_get_uint (fop->conf, "filesystem.segment_size");
     fop->released = FALSE;
     fop->current_size = 0;
+    fop->current_size_orig = 0;
     fop->segment_buf = evbuffer_new ();
     fop->segment_count = 0;
     fop->manifest_handled = FALSE;
@@ -113,7 +115,7 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
             gchar *tmp;
             gchar s[20];
 
-            g_snprintf (s, sizeof (s), "%zu", fop->current_size);
+            g_snprintf (s, sizeof (s), "%zu", fop->current_size_orig);
 
             tmp = g_strdup_printf ("%s/%s/", application_get_container_name (con->app), 
                 fop->fname);
@@ -125,6 +127,11 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
 
             g_snprintf (s, sizeof (s), "%zu", fop->segment_size);
             http_connection_add_output_header (con, "X-Object-Meta-Segment-Size", s);
+
+
+            if (conf_get_boolean (fop->conf, "encryption.enabled")) {
+                http_connection_add_output_header (con, "X-Object-Meta-Encrypted", "True");
+            }
 
             req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), fop->fname);
         // an empty file
@@ -152,7 +159,22 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
         }
     }
 
-    // XXX: encryption
+    // encryption
+    if (conf_get_boolean (fop->conf, "encryption.enabled")) {
+        unsigned char *in_buf;
+        unsigned char *out_buf;
+        int len;
+
+        in_buf = evbuffer_pullup (fop->segment_buf, -1);
+        len = evbuffer_get_length (fop->segment_buf);
+        out_buf = hfs_encryption_encrypt (application_get_encryption (con->app), in_buf, &len);
+        evbuffer_drain (fop->segment_buf, -1);
+        evbuffer_add (fop->segment_buf, out_buf, len);
+        g_free (out_buf);
+
+        // set header
+        http_connection_add_output_header (con, "X-Object-Meta-Encrypted", "True");
+    }
 
     res = http_connection_make_request_to_storage_url (con, 
         req_path, "PUT", fop->segment_buf,
@@ -282,7 +304,6 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
     );
 
     // encryption
-    /*
     if (conf_get_boolean (fop->conf, "encryption.enabled")) {
         unsigned char *in_buf;
         unsigned char *out_buf;
@@ -294,10 +315,10 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
         evbuffer_drain (seg, -1);
         evbuffer_add (seg, out_buf, len);
         g_free (out_buf);
-
-        LOG_debug (FOP_LOG, "Encrypted: outlen: %zu", len);
+        
+        // set header
+        http_connection_add_output_header (con, "X-Object-Meta-Encrypted", "True");
     }
-    */
 
     res = http_connection_make_request_to_storage_url (con, 
         req_path, "PUT", seg,
@@ -342,6 +363,8 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
 
     evbuffer_add (fop->segment_buf, buf, buf_size);
     fop->current_size += buf_size;
+    // XXX: check encrypted len
+    fop->current_size_orig = fop->current_size;
     fop->write_called = TRUE;
     
     // check if we need to flush segment buffer
@@ -478,7 +501,12 @@ static void hfs_fileop_read_on_read_cb (HttpConnection *con, void *ctx,
         out_len = buf_len;
         out_buf = hfs_encryption_decrypt (application_get_encryption (con->app), (unsigned char *)buf, &out_len);
         free_buf = TRUE;
-        LOG_debug (FOP_LOG, "Decrypted, len: %zu inlen: %zd", out_len, buf_len);
+
+        if (buf_len > out_len) {
+            // update requested size !
+            read_data->original_req_size = out_len;
+        }
+        LOG_debug (FOP_LOG, "Decrypted %d -> %d", buf_len, out_len);
     } else {
         out_buf = buf;
         out_len = buf_len;
@@ -589,6 +617,8 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
         read_data_destroy (read_data);
         g_free (buf);
         return;
+    } else {
+        LOG_err (FOP_LOG, "Hit miss");
     }
 
     // current segment buffer has different ID or empty
@@ -632,12 +662,6 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
 
     // check if buffer is filled
     if (!read_data->size_left) {
-        // verify
-        if (evbuffer_get_length (read_data->read_buf) != read_data->original_req_size) {
-            LOG_err (FOP_LOG, "Read buffer does not match requested size: %zu != %zu",
-                evbuffer_get_length (read_data->read_buf), read_data->original_req_size);
-        }
-        
         // return whole read_buffer
         buf = evbuffer_pullup (read_data->read_buf, -1);
         read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)buf, evbuffer_get_length (read_data->read_buf));
@@ -661,6 +685,7 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
     int out_len;
     const char *manifest_header;
     const char *size_header;
+    const char *object_size_header = evhttp_find_header (headers, "X-Object-Meta-Size");
 
     LOG_debug (FOP_LOG, "Got %zu bytes for manifest: %zu", buf_len, read_data->segment_id);
 
@@ -685,12 +710,17 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
         return;
     }
 
+    // if Meta Size object is present - use it as the "size"  (as it tells decrypted file size)
+    object_size_header = evhttp_find_header (headers, "X-Object-Meta-Size");
+    if (object_size_header) {
+        fop->full_object_size = strtoll ((char *)object_size_header, NULL, 10);
+    }
+
     // check if it's a segmented file
     manifest_header = evhttp_find_header (headers, "X-Object-Manifest");
     if (manifest_header) {
         // get segment size header
         const char *segment_size_header = evhttp_find_header (headers, "X-Object-Meta-Segment-Size");
-        const char *object_size_header = evhttp_find_header (headers, "X-Object-Meta-Size");
 
         if (segment_size_header) {
             read_data->segment_size = strtoll ((char *)segment_size_header, NULL, 10);
@@ -698,16 +728,6 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
             fop->segment_size = read_data->segment_size;
         }
         
-        // verify
-        if (object_size_header) {
-            guint64 object_size = strtoll ((char *)segment_size_header, NULL, 10);
-            if (fop->full_object_size != object_size) {
-                LOG_err (FOP_LOG, "Content size does not match meta size !");
-                read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
-                read_data_destroy (read_data);
-                return;
-            }
-        }
     
         LOG_debug (FOP_LOG, "Got Manifest, starting to download segments. Segment size: %zu  Object size: %zu",
             read_data->segment_size, fop->full_object_size);

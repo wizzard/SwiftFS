@@ -45,6 +45,7 @@ struct _Application {
     struct event_base *evbase;
     struct evdns_base *dns_base;
     ConfData *conf;
+    HfsStatsSrv *stats;
 
     AuthClient *auth_client;
 };
@@ -76,6 +77,11 @@ AuthClient *application_get_auth_client (Application *app)
 const gchar *application_get_storage_url (Application *app)
 {
     return NULL;
+}
+
+HfsStatsSrv *application_get_stats_srv (Application *app)
+{
+    return app->stats;
 }
 
 
@@ -413,6 +419,7 @@ int main (int argc, char *argv[])
     app = g_new0 (Application, 1);
     app->evbase = evbase;
 	app->dns_base = dns_base;
+    app->stats = hfs_stats_srv_create (app);
 
         app->conf = conf_create ();
         conf_add_boolean (app->conf, "log.use_syslog", TRUE);

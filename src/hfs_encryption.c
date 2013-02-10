@@ -103,6 +103,9 @@ unsigned char *hfs_encryption_encrypt (HfsEncryption *enc, unsigned char *buf, i
     EVP_EncryptFinal_ex (&enc->e_ctx, out + c_len, &f_len);
 
     *len = c_len + f_len;
+    
+    LOG_debug (ENC_LOG, "Encrypted %d bytes", *len);
+    
     return out;
 }
 
@@ -118,5 +121,8 @@ unsigned char *hfs_encryption_decrypt (HfsEncryption *enc, unsigned char *buf, i
     EVP_DecryptFinal_ex (&enc->d_ctx, out + p_len, &f_len);
 
     *len = p_len + f_len;
+
+    LOG_debug (ENC_LOG, "Decrypted %d bytes", *len);
+
     return out;
 }

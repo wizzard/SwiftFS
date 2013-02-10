@@ -39,6 +39,7 @@ struct _Application {
     struct event *timeout;
 
     AuthClient *auth_client;
+    HfsStatsSrv *stats;
 
     gint files_count;
 
@@ -331,6 +332,11 @@ const gchar *application_get_storage_url (Application *app)
     return NULL;
 }
 
+HfsStatsSrv *application_get_stats_srv (Application *app)
+{
+    return app->stats;
+}
+
 /*}}}*/
 
 int main (int argc, char *argv[])
@@ -353,6 +359,7 @@ int main (int argc, char *argv[])
     app->files_count = 10;
     app->evbase = event_base_new ();
 	app->dns_base = evdns_base_new (app->evbase, 1);
+    app->stats = hfs_stats_srv_create (app);
 
         app->conf = conf_create ();
         conf_add_boolean (app->conf, "log.use_syslog", TRUE);

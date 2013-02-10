@@ -12,6 +12,8 @@ struct _CacheMng {
     GHashTable *h_files; // ino -> CacheEntry
 
     guint64 cache_hits;
+
+    struct event *timeout;
 };
 
 typedef struct {
@@ -31,6 +33,7 @@ static void cache_entry_destroy (CacheEntry *en);
 CacheMng *cache_mng_create (Application *app)
 {
     CacheMng *cmng;
+    struct timeval tv;
 
     cmng = g_new0 (CacheMng, 1);
     cmng->app = app;
@@ -39,6 +42,12 @@ CacheMng *cache_mng_create (Application *app)
     cmng->cache_hits = 0;
 
     //XXX: free cache directory
+    
+    cmng->timeout = evtimer_new (application_get_evbase (app), cache_mng_on_cache_check_cb, cmng);
+    // start event
+    evutil_timerclear (&tv);
+    tv.tv_sec = conf_get_uint (cmng->conf, "filesystem.cache_check_secs");
+    event_add (cmng->timeout, &tv);
 
     return cmng;
 }
@@ -47,6 +56,20 @@ void cache_mng_destroy (CacheMng *cmng)
 {
     g_hash_table_destroy (cmng->h_files);
     g_free (cmng);
+}
+
+// on timer, check objects in cache to remove expired
+static void cache_mng_on_cache_check_cb (evutil_socket_t fd, short event, void *ctx)
+{
+    struct timeval tv;
+    CacheMng *cmng = (CacheMng *) ctx;
+
+    LOG_debug (CMNG_LOG, "Checking for expired cached objects");
+
+    // restart event
+    evutil_timerclear (&tv);
+    tv.tv_sec = conf_get_uint (cmng->conf, "filesystem.cache_check_secs");
+    event_add (cmng->timeout, &tv);
 }
 
 static CacheEntry *cache_entry_create (CacheMng *cmng, fuse_ino_t ino)

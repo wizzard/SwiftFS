@@ -16,4 +16,7 @@ void hfs_stats_srv_add_up_bytes (HfsStatsSrv *srv, guint32 bytes);
 guint32 hfs_stats_srv_get_down_speed (HfsStatsSrv *srv);
 guint32 hfs_stats_srv_get_up_speed (HfsStatsSrv *srv);
 
+void hfs_stats_srv_set_auth_srv_status (HfsStatsSrv *srv, gint code, const gchar *status_line);
+void hfs_stats_srv_set_storage_srv_status (HfsStatsSrv *srv, gint code, const gchar *status_line);
+
 #endif

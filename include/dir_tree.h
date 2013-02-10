@@ -66,6 +66,7 @@ void dir_tree_file_release (DirTree *dtree, fuse_ino_t ino, struct fuse_file_inf
 
 typedef void (*DirTree_file_remove_cb) (fuse_req_t req, gboolean success);
 void dir_tree_file_remove (DirTree *dtree, fuse_ino_t ino, DirTree_file_remove_cb file_remove_cb, fuse_req_t req);
+void dir_tree_file_unlink (DirTree *dtree, fuse_ino_t parent_ino, const char *name, DirTree_file_remove_cb file_remove_cb, fuse_req_t req);
 
 typedef void (*DirTree_dir_remove_cb) (fuse_req_t req, gboolean success);
 void dir_tree_dir_remove (DirTree *dtree, fuse_ino_t parent_ino, const char *name, 

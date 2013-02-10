@@ -380,6 +380,7 @@ int main (int argc, char *argv[])
     struct stat st;
 	int r;
     gchar **storage_url = NULL;
+    gchar **key_file = NULL;
     gchar **cache_dir = NULL;
     gboolean disable_stats = FALSE;
     gboolean disable_cache = FALSE;
@@ -397,6 +398,7 @@ int main (int argc, char *argv[])
         { "cache_dir", 0, 0, G_OPTION_ARG_STRING_ARRAY, &cache_dir, "Set cache directory.", NULL },
         { "disable_stats", 0, 0, G_OPTION_ARG_NONE, &disable_stats, "Flag. Disable stats server.", NULL },
         { "segment_size", 0, 0, G_OPTION_ARG_INT, &segment_size, "Set file segment size (in bytes).", NULL },
+        { "key_file", 'k', 0, G_OPTION_ARG_STRING_ARRAY, &key_file, "Path to key file. Enables encryption.", NULL },
         { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose, "Verbose output.", NULL },
         { "version", 0, 0, G_OPTION_ARG_NONE, &version, "Show application version and exit.", NULL },
         { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
@@ -407,6 +409,7 @@ int main (int argc, char *argv[])
     SSL_load_error_strings();
     OpenSSL_add_all_algorithms();
     r = RAND_poll ();
+
     if (r == 0) {
         fprintf(stderr, "RAND_poll() failed.\n");
         return 1;
@@ -452,8 +455,6 @@ int main (int argc, char *argv[])
     else
         log_level = LOG_msg;
 
-
-    
     // get access parameters from the environment
     app->auth_user = getenv ("HydraFS_USER");
     app->auth_pwd = getenv ("HydraFS_PWD");
@@ -542,6 +543,7 @@ int main (int argc, char *argv[])
         conf_add_string (app->conf, "filesystem.cache_dir_max_size", "1Gb");
         conf_add_uint (app->conf, "filesystem.segment_size", 5242880); // 5mb
         conf_add_uint (app->conf, "filesystem.cache_object_ttl", 600); // 10 min
+        conf_add_uint (app->conf, "filesystem.cache_check_secs", 60); // 1 min
 
         conf_add_boolean (app->conf, "encryption.enabled", FALSE);
         conf_add_string (app->conf, "encryption.key_file", "");
@@ -596,6 +598,12 @@ int main (int argc, char *argv[])
 
     if (segment_size) {
         conf_add_uint (app->conf, "filesystem.segment_size", segment_size);
+    }
+
+    if (key_file && g_strv_length (key_file) > 0) {
+        conf_add_string (app->conf, "encryption.key_file", key_file[0]);
+        g_strfreev (key_file);
+        conf_add_boolean (app->conf, "encryption.enabled", TRUE);
     }
 
 /*}}}*/

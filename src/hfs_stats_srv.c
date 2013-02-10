@@ -19,6 +19,13 @@ struct _HfsStatsSrv {
 
     SpeedEntry a_down_speed[STATS_INTERVAL_SECS]; // list of SpeedEntry for downloading
     SpeedEntry a_up_speed[STATS_INTERVAL_SECS]; // list of SpeedEntry for uploading
+
+    gint auth_server_status;
+    gchar *auth_server_status_line;
+    guint64 auth_server_requests;
+    gint storage_server_status;
+    gchar *storage_server_status_line;
+    guint64 storage_server_requests;
 };
 
 static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg);
@@ -30,6 +37,13 @@ HfsStatsSrv *hfs_stats_srv_create (Application *app)
     srv = g_new0 (HfsStatsSrv, 1);
     srv->app = app;
     srv->conf = application_get_conf (app);
+
+    srv->auth_server_status = 0;
+    srv->storage_server_status = 0;
+    srv->auth_server_status_line = NULL;
+    srv->storage_server_status_line = NULL;
+    srv->auth_server_requests = 0;
+    srv->storage_server_requests = 0;
 
     if (conf_get_boolean (srv->conf, "statistics.enabled")) {
         gint port;
@@ -47,15 +61,17 @@ HfsStatsSrv *hfs_stats_srv_create (Application *app)
         }
 
     }
-
     return srv;
 }
 
 void hfs_stats_srv_destroy (HfsStatsSrv *srv)
 {
+    g_free (srv->auth_server_status_line);
+    g_free (srv->storage_server_status_line);
     g_free (srv);
 }
 
+/*{{{ speed */
 static void hfs_stats_srv_add_speed_bytes (SpeedEntry *a_speed, guint32 bytes)
 {
     time_t now = time (NULL);
@@ -109,7 +125,6 @@ static const gchar *hfs_stats_srv_get_speed_str (SpeedEntry *a_speed)
     return out;
 }
 
-
 void hfs_stats_srv_add_down_bytes (HfsStatsSrv *srv, guint32 bytes)
 {
     hfs_stats_srv_add_speed_bytes (srv->a_down_speed, bytes);
@@ -140,6 +155,7 @@ const gchar *hfs_stats_srv_get_up_speed_str (HfsStatsSrv *srv)
 {
     return hfs_stats_srv_get_speed_str (srv->a_up_speed);
 }
+/*}}}*/
 
 static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg)
 {
@@ -168,12 +184,36 @@ static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg)
     {
         gchar down_speed[20];
         strcpy (down_speed, hfs_stats_srv_get_down_speed_str (srv));
-        evbuffer_add_printf (evb, "Down: %s Up: %s",
-            down_speed,
-            hfs_stats_srv_get_up_speed_str (srv)
+        evbuffer_add_printf (evb, 
+            "Auth server status: %d (%s) Requests: %"G_GUINT64_FORMAT" <BR>"
+            "Storage server status: %d (%s) Requests: %"G_GUINT64_FORMAT" <BR>"
+            "Down speed: %s Up speed: %s",
+            srv->auth_server_status, srv->auth_server_status_line, srv->auth_server_requests,
+            srv->storage_server_status, srv->storage_server_status_line, srv->storage_server_requests,
+            down_speed, hfs_stats_srv_get_up_speed_str (srv)
         );
     }
 
     evhttp_send_reply (req, 200, "OK", evb);
     evbuffer_free (evb);
+}
+
+void hfs_stats_srv_set_auth_srv_status (HfsStatsSrv *srv, gint code, const gchar *status_line)
+{
+    srv->auth_server_requests ++;
+    if (srv->auth_server_status != code) {
+        srv->auth_server_status = code;
+        g_free (srv->auth_server_status_line);
+        srv->auth_server_status_line = g_strdup (status_line);
+    }
+}
+
+void hfs_stats_srv_set_storage_srv_status (HfsStatsSrv *srv, gint code, const gchar *status_line)
+{
+    srv->storage_server_requests ++;
+    if (srv->storage_server_status != code) {
+        srv->storage_server_status = code;
+        g_free (srv->storage_server_status_line);
+        srv->storage_server_status_line = g_strdup (status_line);
+    }
 }

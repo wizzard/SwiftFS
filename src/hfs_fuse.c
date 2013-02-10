@@ -514,22 +514,37 @@ static void hfs_fuse_forget (fuse_req_t req, fuse_ino_t ino, unsigned long nlook
     HfsFuse *hfs_fuse = fuse_req_userdata (req);
     
     LOG_debug (FUSE_LOG, "forget  inode: %"INO_FMT", nlookup: %lu", ino, nlookup);
-
-    dir_tree_file_remove (hfs_fuse->dir_tree, ino, hfs_fuse_forget_cb, req);
+    
+    if (nlookup != 0) {
+        LOG_debug (FUSE_LOG, "Ignoring forget with nlookup > 0");
+        fuse_reply_none (req);
+    } else
+        dir_tree_file_remove (hfs_fuse->dir_tree, ino, hfs_fuse_forget_cb, req);
 }
 /*}}}*/
 
 /*{{{ unlink operation*/
+
+static void hfs_fuse_unlink_cb (fuse_req_t req, gboolean success)
+{
+    LOG_debug (FUSE_LOG, "[%p] success: %s", req, success ? "TRUE" : "FALSE");
+
+    if (success)
+        fuse_reply_err (req, 0);
+    else
+        fuse_reply_err (req, ENOENT);
+}
+
 // Remove a file
 // Valid replies: fuse_reply_err
 // XXX: not used, see hfs_fuse_forget
 static void hfs_fuse_unlink (fuse_req_t req, fuse_ino_t parent, const char *name)
 {
-    LOG_debug (FUSE_LOG, "unlink  parent_ino: %"INO_FMT", name: %s", parent, name);
+    HfsFuse *hfs_fuse = fuse_req_userdata (req);
+    
+    LOG_debug (FUSE_LOG, "[%p] unlink  parent_ino: %"INO_FMT", name: %s", req, parent, name);
 
-    // XXX:
-
-    fuse_reply_err (req, 0);
+    dir_tree_file_unlink (hfs_fuse->dir_tree, parent, name, hfs_fuse_unlink_cb, req);
 }
 /*}}}*/
 

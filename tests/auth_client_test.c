@@ -14,6 +14,7 @@ struct _Application {
     struct evhttp *http;
 
     AuthClient *auth_client;
+    HfsStatsSrv *stats;
     GList *l_requests;
 };
 
@@ -45,6 +46,10 @@ const gchar *application_get_storage_url (Application *app)
     return NULL;
 }
 
+HfsStatsSrv *application_get_stats_srv (Application *app)
+{
+    return app->stats;
+}
 /*}}}*/
 
 gboolean check_list (GList *l)
@@ -108,6 +113,7 @@ int main (int argc, char *argv[])
     g_assert (conf_parse_file (app->conf, "test.conf.xml") == TRUE);
     conf_add_string (app->conf, "auth.user", "test:tester");
     conf_add_string (app->conf, "auth.key", "testing");
+    app->stats = hfs_stats_srv_create (app);
 
     auth_server_uri = evhttp_uri_parse ("http://10.0.0.104:8080/auth/v1.0");
     app->auth_client = auth_client_create (app, auth_server_uri);

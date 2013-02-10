@@ -49,6 +49,8 @@
     <cache_dir_max_size type="string">1Gb</cache_dir_max_size>
     <!-- maximum time of cached object, 10 min -->
     <cache_object_ttl type="uint">600</cache_object_ttl>
+    <!-- how often check cached objects for expiration, 1 min -->
+    <cache_check_secs type="uint">60</cache_check_secs>
     <!-- segment size for upload / download files (5mb) -->
     <segment_size type="uint">5242880</segment_size>
 </filesystem>
