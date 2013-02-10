@@ -20,10 +20,12 @@ struct _HfsFileOp {
     size_t current_size; // total bytes after read / write calls
     struct evbuffer *segment_buf; // current segment buffer
     size_t segment_count; // current count of segments uploaded / downloaded
+    gboolean manifest_handled; // TRUE if manifest file was sent
 
-    gboolean manifest_handled; // set TRUE if manifest file is downloaded / uploaded
-    gboolean small_file; // send HEAD and then GET for a full file
+    // Global variables for "read" operations
     
+    gboolean initial_head_sent; // set TRUE if HEAD request was sent
+    gboolean full_file; // send HEAD and then GET for a full file
     guint64 full_object_size;
 };
 /*}}}*/
@@ -47,7 +49,7 @@ HfsFileOp *hfs_fileop_create (Application *app, const gchar *fname)
     fop->manifest_handled = FALSE;
     fop->fname = g_strdup (fname);
     fop->write_called = FALSE;
-    fop->small_file = FALSE;
+    fop->full_file = FALSE;
     fop->full_object_size = 0;
 
     return fop;
@@ -368,397 +370,11 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
 
 /*{{{ hfs_fileop_read_buffer*/
 
-// for each "read" call 
-typedef struct {
-    HfsFileOp *fop;
-    HfsFileOp_on_buffer_read_cb on_buffer_read_cb;
-    gpointer ctx;
-
-    struct evbuffer *read_buf; // requested read buffer
-    size_t size_left;
-    off_t current_off;
-    size_t req_size; // to verify
-    off_t req_off;
-    size_t segment_size; // updated segment size
-
-    // used by reading
-    size_t segment_id; // id of the segment (which is in segment_buf)
-    size_t segment_pos; // position in file
-
-    fuse_ino_t ino;
-
-    struct evbuffer *segment_buf; // current segment buffer
-
-} FileOpReadData;
-
-static void hfs_fileop_read_get_buffer (FileOpReadData *read_data);
-
-// segment buffer is retrieved
-static void hfs_fileop_read_on_read_cb (HttpConnection *con, void *ctx, 
-    const gchar *buf, size_t buf_len, 
-    struct evkeyvalq *headers, gboolean success)
-{
-    FileOpReadData *read_data = (FileOpReadData *) ctx;
-    HfsFileOp *fop = read_data->fop;
-    gboolean free_buf = FALSE;
-    unsigned char *out_buf;
-    int out_len;
-    
-    LOG_debug (FOP_LOG, "Got %zu bytes for segment: %zu", buf_len, read_data->segment_id);
-
-    // release HttpConnection
-    http_connection_release (con);
-
-    if (!success) {
-        LOG_err (FOP_LOG, "Failed to retrieve segment !");
-        read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
-        evbuffer_free (read_data->read_buf);
-        evbuffer_free (read_data->segment_buf);
-        g_free (read_data);
-        return;
-    }
-
-    //XXX: MD5
-    if (conf_get_boolean (fop->conf, "filesystem.md5_enabled")) {
-        const char *etag_header;
-
-        etag_header = evhttp_find_header (headers, "Etag");
-        if (etag_header) {
-            gchar *md5_sum;
-            md5_sum = get_md5_sum (buf, buf_len);
-            if (strcmp (etag_header, md5_sum) != 0) {
-                LOG_err (FOP_LOG, "Segment's MD5 sum doesn't match MD5 of received content !");
-                read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
-                evbuffer_free (read_data->read_buf);
-                evbuffer_free (read_data->segment_buf);
-                g_free (read_data);
-            }  
-            g_free (md5_sum);
-        }
-    }
-    
-    //decrypt
-    if (conf_get_boolean (fop->conf, "encryption.enabled")) {
-        out_len = buf_len;
-        out_buf = hfs_encryption_decrypt (application_get_encryption (con->app), (unsigned char *)buf, &out_len);
-        free_buf = TRUE;
-        LOG_debug (FOP_LOG, "Decrypted, len: %zu inlen: %zd", out_len, buf_len);
-    } else {
-        out_buf = buf;
-        out_len = buf_len;
-    }
-
-    
-    cache_mng_store_file_data (application_get_cache_mng (fop->app), 
-        read_data->ino, out_len, read_data->segment_size * read_data->segment_id, (unsigned char *) out_buf);
-
-    // a full file is received
-    /*
-    if (read_data->small_file) {
-        // verify
-        if (out_len != read_data->req_size) {
-            LOG_err (FOP_LOG, "Read buffer does not match requested size: %zu != %zu",
-                out_len, read_data->req_size);
-        }
-
-        read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)out_buf, read_data->req_size);
-        evbuffer_free (read_data->read_buf);
-        evbuffer_free (read_data->segment_buf);
-        g_free (read_data);
-    } else {
-    */
-        // add buf to segment
-        evbuffer_add (read_data->segment_buf, out_buf, out_len);
-        hfs_fileop_read_get_buffer (read_data);
-    //}
-
-    if (free_buf)
-        g_free (out_buf);
-}
-
-// got HTTPConnection object
-// retrieve "segment"
-static void hfs_fileop_read_on_con_cb (gpointer client, gpointer ctx)
-{
-    HttpConnection *con = (HttpConnection *) client;
-    FileOpReadData *read_data = (FileOpReadData *) ctx;
-    HfsFileOp *fop = NULL;
-    gchar *req_path = NULL;
-    gboolean res;
-
-    http_connection_acquire (con);
-
-    fop = read_data->fop;
-
-    // get full file
-    if (fop->small_file) 
-        req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), 
-            fop->fname);
-    // get segment
-    else        
-        req_path = g_strdup_printf ("/%s/%s/%zu", application_get_container_name (con->app), 
-            fop->fname, read_data->segment_id);
-
-    res = http_connection_make_request_to_storage_url (con, 
-        req_path, "GET", NULL,
-        hfs_fileop_read_on_read_cb,
-        read_data
-    );
-
-    g_free (req_path);
-
-    if (!res) {
-        LOG_err (FOP_LOG, "Failed to create HTTP request !");
-        http_connection_release (con);
-        read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
-        evbuffer_free (read_data->read_buf);
-        evbuffer_free (read_data->segment_buf);
-        g_free (read_data);
-        return;
-    }
-}
-
-// check if current segment buffer contains requested buffer
-static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
-{
-    HfsFileOp *fop = read_data->fop;
-    off_t segment_start_id;
-    size_t segment_len;
-    unsigned char *buf;
-    off_t start_pos;
-    size_t len;
-
-    // get segmentID of the beginning
-    segment_start_id = read_data->current_off / read_data->segment_size;
-    // current segment buf length
-    segment_len = evbuffer_get_length (read_data->segment_buf);
-
-    // update the last segment request
-    if (read_data->current_off + read_data->req_size > fop->full_object_size) {
-        LOG_err (FOP_LOG, "Updating request size, object size: %lu", fop->full_object_size);
-        if (read_data->current_off > fop->full_object_size)
-            read_data->req_size = 0;
-        else {
-            read_data->req_size = fop->full_object_size  - read_data->current_off;
-        }
-        
-        read_data->size_left  = read_data->req_size;
-
-    } else {
-    }
-
-    LOG_debug (FOP_LOG, "current segment: %zu, segment len: %zu,  requested segment: %zu, req size: %zu, got so far: %zu of %zu, current off: %zu",
-        read_data->segment_id, segment_len, segment_start_id, read_data->size_left, evbuffer_get_length (read_data->read_buf), read_data->req_size,
-        read_data->current_off);
-
-    LOG_debug (FOP_LOG, "Expected seg size: %zu, actual: %zu", read_data->segment_size, evbuffer_get_length (read_data->segment_buf));
-
-    // retrieve from cache
-    buf = cache_mng_retr_file_data (application_get_cache_mng (fop->app), 
-        read_data->ino, read_data->size_left, read_data->current_off);
-
-    if (buf) {
-        // empty buffer
-        evbuffer_drain (read_data->segment_buf, -1);
-
-        // verify
-        if (read_data->size_left != read_data->req_size) {
-            LOG_err (FOP_LOG, "Read buffer does not match requested size: %zu != %zu",
-               read_data->size_left , read_data->req_size);
-        }
-
-        read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)buf, read_data->size_left);
-        g_free (buf);
-
-        evbuffer_free (read_data->read_buf);
-        evbuffer_free (read_data->segment_buf);
-        g_free (read_data);
-
-        return;
-    }
-
-    // current segment buffer has different ID or empty
-    if (segment_start_id != read_data->segment_id || !segment_len) {
-        // empty buffer
-        evbuffer_drain (read_data->segment_buf, -1);
-
-        // set segmentID
-        read_data->segment_id = segment_start_id;
-
-        // get HTTP connection to download segment 
-        if (!client_pool_get_client (application_get_read_client_pool (fop->app), hfs_fileop_read_on_con_cb, read_data)) {
-            LOG_err (FOP_LOG, "Failed to get HTTP client !");
-
-            read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
-            // free
-            evbuffer_free (read_data->read_buf);
-            evbuffer_free (read_data->segment_buf);
-            g_free (read_data);
-            return;
-        }
-
-        return;
-    }
-
-    // we have the right segment buffer
-    buf = evbuffer_pullup (read_data->segment_buf, -1);
-    start_pos = read_data->current_off - (read_data->segment_size * segment_start_id);
-    len = read_data->segment_size - start_pos;
-    if (read_data->size_left <= len)
-        len = read_data->size_left;
-
-    LOG_debug (FOP_LOG, "segment_buf size: %zu,  start_pos: %zu   len: %zu",  evbuffer_get_length (read_data->segment_buf), start_pos, len);
-
-    evbuffer_add (read_data->read_buf, buf + start_pos, len);
-
-    // update
-    read_data->current_off = read_data->current_off + len;
-    read_data->size_left = read_data->size_left - len;
-
-    LOG_debug (FOP_LOG, "start_pos: %zu len: %zu current_off: %zu size_left: %zu", start_pos, len, read_data->current_off, read_data->size_left);
-
-    // check if buffer is filled
-    if (!read_data->size_left) {
-        // verify
-        if (evbuffer_get_length (read_data->read_buf) != read_data->req_size) {
-            LOG_err (FOP_LOG, "Read buffer does not match requested size: %zu != %zu",
-                evbuffer_get_length (read_data->read_buf), read_data->req_size);
-        }
-        
-        buf = evbuffer_pullup (read_data->read_buf, -1);
-        read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)buf, evbuffer_get_length (read_data->read_buf));
-
-        // free
-        evbuffer_free (read_data->segment_buf);
-        evbuffer_free (read_data->read_buf);
-        g_free (read_data);
-
-    // send a new request
-    } else {
-        hfs_fileop_read_get_buffer (read_data);
-    }
-}
-
-// manifest or a small file is retrieved
-static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx, 
-    const gchar *buf, size_t buf_len, 
-    struct evkeyvalq *headers, gboolean success)
-{
-    FileOpReadData *read_data = (FileOpReadData *) ctx;
-    HfsFileOp *fop = read_data->fop;
-    gboolean free_buf = FALSE;
-    unsigned char *out_buf;
-    int out_len;
-    const char *manifest_header;
-    const char *size_header;
-
-    LOG_debug (FOP_LOG, "Got %zu bytes for manifest: %zu", buf_len, read_data->segment_id);
-
-    // release HttpConnection
-    http_connection_release (con);
-    fop->manifest_handled = TRUE;
-
-    if (!success) {
-        LOG_err (FOP_LOG, "Failed to retrieve segment !");
-        read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
-        evbuffer_free (read_data->read_buf);
-        evbuffer_free (read_data->segment_buf);
-        g_free (read_data);
-        return;
-    }
-
-    size_header = evhttp_find_header (headers, "Content-Length");
-    if (size_header) {
-        fop->full_object_size = strtoll ((char *)size_header, NULL, 10);
-    } else {
-        LOG_err (FOP_LOG, "Failed to retrieve header !");
-        read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
-        evbuffer_free (read_data->read_buf);
-        evbuffer_free (read_data->segment_buf);
-        g_free (read_data);
-        return;
-    }
-
-    manifest_header = evhttp_find_header (headers, "X-Object-Manifest");
-
-    // 0 bytes - manifest
-    if (manifest_header) {
-        // get segment size header
-        const char *segment_size_header = evhttp_find_header (headers, "X-Object-Meta-Segment-Size");
-        const char *object_size_header = evhttp_find_header (headers, "X-Object-Meta-Size");
-        guint64 object_size = 0;
-
-        if (segment_size_header) {
-            read_data->segment_size = strtoll ((char *)segment_size_header, NULL, 10);
-            // update FOP segment size for further operations
-            fop->segment_size = read_data->segment_size;
-        }
-
-        if (object_size_header) {
-            object_size = strtoll ((char *)segment_size_header, NULL, 10);
-        }
-    
-        LOG_debug (FOP_LOG, "Got Manifest, starting to download segments. Segment size: %zu  Object size: %zu",
-            read_data->segment_size, object_size);
-        // start downloading segments
-        hfs_fileop_read_get_buffer (read_data);
-    // a small file
-    } else {
-
-        LOG_debug (FOP_LOG, "Downloading a small file");
-        
-        fop->small_file = TRUE;
-
-        if (!client_pool_get_client (application_get_read_client_pool (fop->app), hfs_fileop_read_on_con_cb, read_data)) {
-            LOG_err (FOP_LOG, "Failed to get HTTP client !");
-
-            read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
-            // free
-            evbuffer_free (read_data->read_buf);
-            evbuffer_free (read_data->segment_buf);
-            g_free (read_data);
-            return;
-        }
-    }
-}
-
-// download manifest or a small file
-static void hfs_fileop_read_manifest_on_con_cb (gpointer client, gpointer ctx)
-{
-    HttpConnection *con = (HttpConnection *) client;
-    FileOpReadData *read_data = (FileOpReadData *) ctx;
-    HfsFileOp *fop = NULL;
-    gchar *req_path = NULL;
-    gboolean res;
-
-    http_connection_acquire (con);
-
-    fop = read_data->fop;
-
-    // XXX: check cache first
-
-    req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), 
-        fop->fname);
-
-    res = http_connection_make_request_to_storage_url (con, 
-        req_path, "HEAD", NULL,
-        hfs_fileop_read_manifest_on_read_cb,
-        read_data
-    );
-
-    g_free (req_path);
-
-    if (!res) {
-        LOG_err (FOP_LOG, "Failed to create HTTP request !");
-        http_connection_release (con);
-        read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
-        evbuffer_free (read_data->read_buf);
-        evbuffer_free (read_data->segment_buf);
-        g_free (read_data);
-        return;
-    }
-}
-
+// 0. for "read ()" operation 2 structures are used:
+    // 0a. HfsFileOp - for "global" variables, such as:
+        // initial "HEAD" request was sent
+        // full_object_size
+    // 0b. FileOpReadData for each "read ()" request
 // 1. If it is the very first read() request:
     // 1a. Send HEAD request to get ContentSize header and determine if requested file contains of a segments
     // 1b. if Head returns Manifest - determine Segment file size, same Manifest path
@@ -782,7 +398,362 @@ static void hfs_fileop_read_manifest_on_con_cb (gpointer client, gpointer ctx)
 // 12c. correct "request size"
 // 12d. goto step #4
 
-// Init read_data and call loop functioin
+// for each "read" call 
+typedef struct {
+    HfsFileOp *fop;
+    HfsFileOp_on_buffer_read_cb on_buffer_read_cb;
+    gpointer ctx;
+
+    struct evbuffer *read_buf; // requested read buffer
+    size_t size_left;
+    off_t current_off;
+    
+    size_t original_req_size; // to verify
+    off_t original_req_off;
+    size_t segment_size; // updated segment size
+
+    // used by reading
+    size_t segment_id; // id of the segment (which is in segment_buf)
+    size_t segment_pos; // position in file
+
+    fuse_ino_t ino;
+
+    struct evbuffer *segment_buf; // current segment buffer
+} FileOpReadData;
+
+static void hfs_fileop_read_get_buffer (FileOpReadData *read_data);
+
+static void read_data_destroy (FileOpReadData *read_data)
+{
+    evbuffer_free (read_data->read_buf);
+    evbuffer_free (read_data->segment_buf);
+    g_free (read_data);
+}
+
+/*{{{ Get file segment / full file */
+
+// segment buffer (or a full file) is retrieved
+// check Md5, decrypt, store to CacheMng
+static void hfs_fileop_read_on_read_cb (HttpConnection *con, void *ctx, 
+    const gchar *buf, size_t buf_len, 
+    struct evkeyvalq *headers, gboolean success)
+{
+    FileOpReadData *read_data = (FileOpReadData *) ctx;
+    HfsFileOp *fop = read_data->fop;
+    gboolean free_buf = FALSE;
+    unsigned char *out_buf;
+    int out_len;
+    
+    LOG_debug (FOP_LOG, "Got %zu bytes for segment: %zu", buf_len, read_data->segment_id);
+
+    // release HttpConnection
+    http_connection_release (con);
+
+    if (!success) {
+        LOG_err (FOP_LOG, "Failed to retrieve segment !");
+        read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+        read_data_destroy (read_data);
+        return;
+    }
+
+    // MD5
+    if (conf_get_boolean (fop->conf, "filesystem.md5_enabled")) {
+        const char *etag_header;
+
+        etag_header = evhttp_find_header (headers, "Etag");
+        if (etag_header) {
+            gchar *md5_sum;
+            md5_sum = get_md5_sum (buf, buf_len);
+            if (strcmp (etag_header, md5_sum) != 0) {
+                LOG_err (FOP_LOG, "Segment's MD5 sum doesn't match MD5 of received content !");
+                read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+                read_data_destroy (read_data);
+            }  
+            g_free (md5_sum);
+        }
+    }
+    
+    //decrypt
+    if (conf_get_boolean (fop->conf, "encryption.enabled")) {
+        out_len = buf_len;
+        out_buf = hfs_encryption_decrypt (application_get_encryption (con->app), (unsigned char *)buf, &out_len);
+        free_buf = TRUE;
+        LOG_debug (FOP_LOG, "Decrypted, len: %zu inlen: %zd", out_len, buf_len);
+    } else {
+        out_buf = buf;
+        out_len = buf_len;
+    }
+
+    cache_mng_store_file_data (application_get_cache_mng (fop->app), 
+        read_data->ino, out_len, read_data->segment_size * read_data->segment_id, (unsigned char *) out_buf);
+
+    // add buf to segment
+    evbuffer_add (read_data->segment_buf, out_buf, out_len);
+    hfs_fileop_read_get_buffer (read_data);
+
+    if (free_buf)
+        g_free (out_buf);
+}
+
+// got HTTPConnection object
+// retrieve "segment" or a full file
+static void hfs_fileop_read_on_con_cb (gpointer client, gpointer ctx)
+{
+    HttpConnection *con = (HttpConnection *) client;
+    FileOpReadData *read_data = (FileOpReadData *) ctx;
+    HfsFileOp *fop = NULL;
+    gchar *req_path = NULL;
+    gboolean res;
+
+    http_connection_acquire (con);
+
+    fop = read_data->fop;
+
+    // get full file
+    if (fop->full_file) 
+        req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), 
+            fop->fname);
+    // get segment
+    else        
+        req_path = g_strdup_printf ("/%s/%s/%zu", application_get_container_name (con->app), 
+            fop->fname, read_data->segment_id);
+
+    res = http_connection_make_request_to_storage_url (con, 
+        req_path, "GET", NULL,
+        hfs_fileop_read_on_read_cb,
+        read_data
+    );
+
+    g_free (req_path);
+
+    if (!res) {
+        LOG_err (FOP_LOG, "Failed to create HTTP request !");
+        http_connection_release (con);
+        read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+        read_data_destroy (read_data);
+        return;
+    }
+}
+/*}}}*/
+
+// check if current segment buffer contains requested buffer
+static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
+{
+    HfsFileOp *fop = read_data->fop;
+    off_t segment_start_id;
+    size_t segment_len;
+    unsigned char *buf;
+    off_t start_pos;
+    size_t len;
+
+    // get segmentID of the beginning
+    segment_start_id = read_data->current_off / read_data->segment_size;
+    // current segment buf length
+    segment_len = evbuffer_get_length (read_data->segment_buf);
+    
+    // check that request does not exceed the object size
+    if (read_data->current_off + read_data->size_left > fop->full_object_size) {
+        LOG_err (FOP_LOG, "Updating request size, object size: %lu", fop->full_object_size);
+        if (read_data->current_off > fop->full_object_size)
+            read_data->size_left = 0;
+        else 
+            read_data->size_left = fop->full_object_size - read_data->current_off;
+    }
+
+    LOG_debug (FOP_LOG, "current segment: %zu, segment len: %zu,  requested segment: %zu, req size: %zu, got so far: %zu of %zu, current off: %zu",
+        read_data->segment_id, segment_len, segment_start_id, read_data->size_left, evbuffer_get_length (read_data->read_buf), 
+        read_data->size_left, read_data->current_off);
+
+    LOG_debug (FOP_LOG, "Expected seg size: %zu, actual: %zu", read_data->segment_size, evbuffer_get_length (read_data->segment_buf));
+
+    // retrieve from cache
+    buf = cache_mng_retr_file_data (application_get_cache_mng (fop->app), 
+        read_data->ino, read_data->size_left, read_data->current_off);
+
+    if (buf) {
+        // empty buffer
+        evbuffer_drain (read_data->segment_buf, -1);
+
+        // verify
+        if (read_data->size_left != read_data->original_req_size) {
+            LOG_err (FOP_LOG, "Read buffer does not match requested size: %zu != %zu",
+               read_data->size_left , read_data->original_req_size);
+        }
+
+        read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)buf, read_data->size_left);
+        read_data_destroy (read_data);
+        g_free (buf);
+        return;
+    }
+
+    // current segment buffer has different ID or empty
+    if (segment_start_id != read_data->segment_id || !segment_len) {
+        // empty buffer
+        evbuffer_drain (read_data->segment_buf, -1);
+
+        // set segmentID
+        read_data->segment_id = segment_start_id;
+
+        // get HTTP connection to download segment 
+        if (!client_pool_get_client (application_get_read_client_pool (fop->app), hfs_fileop_read_on_con_cb, read_data)) {
+            LOG_err (FOP_LOG, "Failed to get HTTP client !");
+            read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+            read_data_destroy (read_data);
+            return;
+        }
+
+        return;
+    }
+
+    // we have the right segment buffer
+    buf = evbuffer_pullup (read_data->segment_buf, -1);
+    // start pos in the current buffer
+    start_pos = read_data->current_off - (read_data->segment_size * segment_start_id);
+    // length to get from the current buffer
+    len = read_data->segment_size - start_pos;
+    // whole request is in the current buffer
+    if (read_data->size_left <= len)
+        len = read_data->size_left;
+
+    LOG_debug (FOP_LOG, "segment_buf size: %zu,  start_pos: %zu   len: %zu",  evbuffer_get_length (read_data->segment_buf), start_pos, len);
+
+    evbuffer_add (read_data->read_buf, buf + start_pos, len);
+
+    // update
+    read_data->current_off = read_data->current_off + len;
+    read_data->size_left = read_data->size_left - len;
+
+    LOG_debug (FOP_LOG, "start_pos: %zu len: %zu current_off: %zu size_left: %zu", start_pos, len, read_data->current_off, read_data->size_left);
+
+    // check if buffer is filled
+    if (!read_data->size_left) {
+        // verify
+        if (evbuffer_get_length (read_data->read_buf) != read_data->original_req_size) {
+            LOG_err (FOP_LOG, "Read buffer does not match requested size: %zu != %zu",
+                evbuffer_get_length (read_data->read_buf), read_data->original_req_size);
+        }
+        
+        // return whole read_buffer
+        buf = evbuffer_pullup (read_data->read_buf, -1);
+        read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)buf, evbuffer_get_length (read_data->read_buf));
+        read_data_destroy (read_data);
+    // send a new request
+    } else {
+        hfs_fileop_read_get_buffer (read_data);
+    }
+}
+
+/*{{{ initial HEAD request */
+// manifest or a full file is retrieved
+static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx, 
+    const gchar *buf, size_t buf_len, 
+    struct evkeyvalq *headers, gboolean success)
+{
+    FileOpReadData *read_data = (FileOpReadData *) ctx;
+    HfsFileOp *fop = read_data->fop;
+    gboolean free_buf = FALSE;
+    unsigned char *out_buf;
+    int out_len;
+    const char *manifest_header;
+    const char *size_header;
+
+    LOG_debug (FOP_LOG, "Got %zu bytes for manifest: %zu", buf_len, read_data->segment_id);
+
+    // release HttpConnection
+    http_connection_release (con);
+
+    if (!success) {
+        LOG_err (FOP_LOG, "Failed to retrieve segment !");
+        read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+        read_data_destroy (read_data);
+        return;
+    }
+
+    // get full size of object
+    size_header = evhttp_find_header (headers, "Content-Length");
+    if (size_header) {
+        fop->full_object_size = strtoll ((char *)size_header, NULL, 10);
+    } else {
+        LOG_err (FOP_LOG, "Failed to retrieve header !");
+        read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+        read_data_destroy (read_data);
+        return;
+    }
+
+    // check if it's a segmented file
+    manifest_header = evhttp_find_header (headers, "X-Object-Manifest");
+    if (manifest_header) {
+        // get segment size header
+        const char *segment_size_header = evhttp_find_header (headers, "X-Object-Meta-Segment-Size");
+        const char *object_size_header = evhttp_find_header (headers, "X-Object-Meta-Size");
+
+        if (segment_size_header) {
+            read_data->segment_size = strtoll ((char *)segment_size_header, NULL, 10);
+            // update FOP segment size for further operations
+            fop->segment_size = read_data->segment_size;
+        }
+        
+        // verify
+        if (object_size_header) {
+            guint64 object_size = strtoll ((char *)segment_size_header, NULL, 10);
+            if (fop->full_object_size != object_size) {
+                LOG_err (FOP_LOG, "Content size does not match meta size !");
+                read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+                read_data_destroy (read_data);
+                return;
+            }
+        }
+    
+        LOG_debug (FOP_LOG, "Got Manifest, starting to download segments. Segment size: %zu  Object size: %zu",
+            read_data->segment_size, fop->full_object_size);
+    
+        // a full file
+    } else {
+        LOG_debug (FOP_LOG, "Downloading a full file, size: %llu", fop->full_object_size);
+        fop->full_file = TRUE;
+    }
+
+    // start downloading segments / file
+    hfs_fileop_read_get_buffer (read_data);
+}
+
+// Send Head request to get manifest or a full file Meta data
+static void hfs_fileop_read_manifest_on_con_cb (gpointer client, gpointer ctx)
+{
+    HttpConnection *con = (HttpConnection *) client;
+    FileOpReadData *read_data = (FileOpReadData *) ctx;
+    HfsFileOp *fop = NULL;
+    gchar *req_path = NULL;
+    gboolean res;
+
+    http_connection_acquire (con);
+
+    fop = read_data->fop;
+
+    req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), 
+        fop->fname);
+
+    res = http_connection_make_request_to_storage_url (con, 
+        req_path, "HEAD", NULL,
+        hfs_fileop_read_manifest_on_read_cb,
+        read_data
+    );
+
+    g_free (req_path);
+
+    if (!res) {
+        LOG_err (FOP_LOG, "Failed to create HTTP request !");
+        http_connection_release (con);
+        read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+        read_data_destroy (read_data);
+        return;
+    }
+}
+/*}}}*/
+
+// Init read_data
+// Get HTTPConnection object for HEAD request
+// or continue handing "read ()" call
 void hfs_fileop_read_buffer (HfsFileOp *fop,
     size_t size, off_t off, fuse_ino_t ino,
     HfsFileOp_on_buffer_read_cb on_buffer_read_cb, gpointer ctx)
@@ -790,29 +761,37 @@ void hfs_fileop_read_buffer (HfsFileOp *fop,
     FileOpReadData *read_data;
     
     read_data = g_new0 (FileOpReadData, 1);
+    // various data
     read_data->fop = fop;
     read_data->on_buffer_read_cb = on_buffer_read_cb;
     read_data->ctx = ctx;
+    read_data->ino = ino;
+
+    // set default segment size
+    read_data->segment_size = fop->segment_size;
+    // current segment id
+    read_data->segment_id = 0;
+    
+    // buffer with data to send back to read () caller
     read_data->read_buf = evbuffer_new ();
+    // decrypted segment
     read_data->segment_buf = evbuffer_new ();
+
     read_data->size_left = size;
     read_data->current_off = off;
-    read_data->req_size = size;
-    read_data->req_off = off;
-    read_data->segment_id = 0;
-    read_data->ino = ino;
-    read_data->segment_size = fop->segment_size;
 
-    if (!fop->manifest_handled) {
-        // get HTTP connection to download manifest or a small file
+    // save original req values
+    read_data->original_req_size = size;
+    read_data->original_req_off = off;
+
+    if (!fop->initial_head_sent) {
+        fop->initial_head_sent = TRUE;
+
+        // get HTTP connection to download manifest or a full file
         if (!client_pool_get_client (application_get_read_client_pool (fop->app), hfs_fileop_read_manifest_on_con_cb, read_data)) {
             LOG_err (FOP_LOG, "Failed to get HTTP client !");
-
             read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
-            // free
-            evbuffer_free (read_data->read_buf);
-            evbuffer_free (read_data->segment_buf);
-            g_free (read_data);
+            read_data_destroy (read_data);
         }
     } else {
         LOG_debug (FOP_LOG, "Continue downloading segments");
