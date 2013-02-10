@@ -23,7 +23,7 @@ class App ():
         self.write_cache_dir = "/tmp/test_segments/write_cache/"
         self.read_dir = "/tmp/test_segments/read/"
         self.read_cache_dir = "/tmp/test_segments/read_cache/"
-        self.nr_tests = 1
+        self.nr_tests = 10
         self.l_files = []
         random.seed (time.time())
 

@@ -383,6 +383,7 @@ int main (int argc, char *argv[])
     gchar **cache_dir = NULL;
     gboolean disable_stats = FALSE;
     gboolean disable_cache = FALSE;
+    guint32 segment_size = 0;
 
     conf_path = g_build_filename (SYSCONFDIR, "hydrafs.conf", NULL); 
     g_snprintf (conf_str, sizeof (conf_str), "Path to configuration file. Default: %s", conf_path);
@@ -395,6 +396,7 @@ int main (int argc, char *argv[])
         { "disable_cache", 0, 0, G_OPTION_ARG_NONE, &disable_cache, "Flag. Disable file caching.", NULL },
         { "cache_dir", 0, 0, G_OPTION_ARG_STRING_ARRAY, &cache_dir, "Set cache directory.", NULL },
         { "disable_stats", 0, 0, G_OPTION_ARG_NONE, &disable_stats, "Flag. Disable stats server.", NULL },
+        { "segment_size", 0, 0, G_OPTION_ARG_INT, &segment_size, "Set file segment size (in bytes).", NULL },
         { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose, "Verbose output.", NULL },
         { "version", 0, 0, G_OPTION_ARG_NONE, &version, "Show application version and exit.", NULL },
         { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
@@ -590,6 +592,10 @@ int main (int argc, char *argv[])
     if (cache_dir && g_strv_length (cache_dir) > 0) {
         conf_add_string (app->conf, "filesystem.cache_dir", cache_dir[0]);
         g_strfreev (cache_dir);
+    }
+
+    if (segment_size) {
+        conf_add_uint (app->conf, "filesystem.segment_size", segment_size);
     }
 
 /*}}}*/

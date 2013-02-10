@@ -356,7 +356,7 @@ void conf_add_uint (ConfData *conf, const gchar *full_path, guint32 val)
     conf_node->type = CT_UINT;
     conf_node->value = GUINT_TO_POINTER (val);
 
-    g_hash_table_insert (conf->h_conf, conf_node->full_name, conf_node);
+    g_hash_table_replace (conf->h_conf, conf_node->full_name, conf_node);
 }
 
 GList *conf_get_list (ConfData *conf, const gchar *path)
