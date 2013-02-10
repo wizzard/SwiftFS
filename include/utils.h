@@ -16,4 +16,6 @@ gboolean uri_is_https (const struct evhttp_uri *uri);
 //return URI port, or default one (80 for HTTP, 443 for HTTPS)
 gint uri_get_port (const struct evhttp_uri *uri);
 
+int utils_del_tree (const gchar *path);
+
 #endif

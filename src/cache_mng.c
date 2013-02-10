@@ -27,6 +27,7 @@ typedef struct {
 } CacheEntry;
 
 static void cache_entry_destroy (CacheEntry *en);
+static void cache_mng_on_cache_check_cb (evutil_socket_t fd, short event, void *ctx);
 
 #define CMNG_LOG "cmng"
 
@@ -41,7 +42,20 @@ CacheMng *cache_mng_create (Application *app)
     cmng->h_files = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, (GDestroyNotify)cache_entry_destroy);
     cmng->cache_hits = 0;
 
-    //XXX: free cache directory
+    // free cache directory
+    utils_del_tree (conf_get_string (cmng->conf, "filesystem.cache_dir"));
+
+    // make sure cache directory exists and is accessible 
+    if (g_access (conf_get_string (cmng->conf, "filesystem.cache_dir"), F_OK | W_OK) == -1) {
+        // try to create it
+        int mask;
+        // create directory,  drwx-------
+        mask = S_IRUSR | S_IWUSR | S_IXUSR;
+        if (g_mkdir (conf_get_string (cmng->conf, "filesystem.cache_dir"), mask) == -1) {
+            LOG_err (CMNG_LOG, "Failed to create temporary directory: %s - %s", conf_get_string (cmng->conf, "filesystem.cache_dir"), strerror (errno));
+            return NULL;
+        }
+    }
     
     cmng->timeout = evtimer_new (application_get_evbase (app), cache_mng_on_cache_check_cb, cmng);
     // start event
@@ -58,13 +72,32 @@ void cache_mng_destroy (CacheMng *cmng)
     g_free (cmng);
 }
 
+// return TRUE if entry should be removed
+static gboolean cache_mng_on_remove_file_cb (gpointer key, gpointer value, gpointer ctx)
+{
+    CacheMng *cmng = (CacheMng *) ctx;
+    CacheEntry *en = (CacheEntry *) value;
+    fuse_ino_t ino = GPOINTER_TO_UINT (key);
+    time_t now = time (NULL);
+
+    if (now > en->atime && now - en->atime >= conf_get_uint (en->cmng->conf, "filesystem.cache_object_ttl")) {
+        LOG_debug (CMNG_LOG, "Object expired, ino: %"INO_FMT, ino);
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 // on timer, check objects in cache to remove expired
 static void cache_mng_on_cache_check_cb (evutil_socket_t fd, short event, void *ctx)
 {
     struct timeval tv;
     CacheMng *cmng = (CacheMng *) ctx;
+    guint count;
 
     LOG_debug (CMNG_LOG, "Checking for expired cached objects");
+    count = g_hash_table_foreach_remove (cmng->h_files, cache_mng_on_remove_file_cb, cmng);
+    LOG_debug (CMNG_LOG, "Objects removed: %u", count);
 
     // restart event
     evutil_timerclear (&tv);
