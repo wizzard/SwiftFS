@@ -23,7 +23,7 @@ class App ():
         self.write_cache_dir = "/tmp/test_segments/write_cache/"
         self.read_dir = "/tmp/test_segments/read/"
         self.read_cache_dir = "/tmp/test_segments/read_cache/"
-        self.nr_tests = 20
+        self.nr_tests = 1
         self.l_files = []
         random.seed (time.time())
 
@@ -32,8 +32,8 @@ class App ():
         if pid == 0:
             base_path = os.path.join(os.path.dirname(__file__), '..')
             bin_path = os.path.join(base_path, "src")
-            #cache = "--cache_dir=" + cache_dir
-            cache = "--disable_cache"
+            cache = "--cache_dir=" + cache_dir
+            #cache = "--disable_cache"
             #args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", "--disable_cache", "--disable_stats", "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
             args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", cache, "--disable_stats", "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
             sys.stdout = open (log_file, 'w')
@@ -138,6 +138,13 @@ class App ():
 
     def create_files (self):
 
+        # tiny files < 4kb
+        for i in range (0, self.nr_tests):
+            fname = self.str_gen ()
+            flen = random.randint (1, 1024 * 4)
+            self.create_file (self.src_dir + fname, flen)
+            self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
+
         # small files < 5mb
         for i in range (0, self.nr_tests):
             fname = self.str_gen ()
@@ -159,6 +166,7 @@ class App ():
             self.create_file (self.src_dir + fname, flen)
             self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
     
+
     def check_file (self, entry):
         out_src_name = self.write_dir + os.path.basename (entry["name"])
         shutil.copy (entry["name"], out_src_name)

@@ -567,20 +567,25 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
     LOG_debug (FOP_LOG, "Expected seg size: %zu, actual: %zu", read_data->segment_size, evbuffer_get_length (read_data->segment_buf));
 
     // retrieve from cache
+    /*
     buf = cache_mng_retr_file_data (application_get_cache_mng (fop->app), 
         read_data->ino, read_data->size_left, read_data->current_off);
-
+    */
+    buf = cache_mng_retr_file_data (application_get_cache_mng (fop->app), 
+        read_data->ino, read_data->original_req_size, read_data->original_req_off);
     if (buf) {
         // empty buffer
         evbuffer_drain (read_data->segment_buf, -1);
 
         // verify
+        /*
         if (read_data->size_left != read_data->original_req_size) {
             LOG_err (FOP_LOG, "Read buffer does not match requested size: %zu != %zu",
                read_data->size_left , read_data->original_req_size);
         }
+        */
 
-        read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)buf, read_data->size_left);
+        read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)buf, read_data->original_req_size);
         read_data_destroy (read_data);
         g_free (buf);
         return;
