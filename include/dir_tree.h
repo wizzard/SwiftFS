@@ -12,10 +12,12 @@ typedef enum {
     DET_file = 1,
 } DirEntryType;
 
+typedef struct _DirEntry DirEntry;
+
 DirTree *dir_tree_create (Application *app);
 void dir_tree_destroy (DirTree *dtree);
 
-void dir_tree_update_entry (DirTree *dtree, const gchar *path, DirEntryType type, 
+DirEntry *dir_tree_update_entry (DirTree *dtree, const gchar *path, DirEntryType type, 
     fuse_ino_t parent_ino, const gchar *entry_name, long long size, time_t last_modified);
 
 void dir_tree_start_update (DirTree *dtree, const gchar *dir_path);

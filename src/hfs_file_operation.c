@@ -22,7 +22,8 @@ struct _HfsFileOp {
     size_t segment_count; // current count of segments uploaded / downloaded
 
     gboolean manifest_handled; // set TRUE if manifest file is downloaded / uploaded
-
+    gboolean small_file; // send HEAD and then GET for a full file
+    guint64 full_object_size;
 };
 /*}}}*/
 
@@ -45,6 +46,8 @@ HfsFileOp *hfs_fileop_create (Application *app, const gchar *fname)
     fop->manifest_handled = FALSE;
     fop->fname = g_strdup (fname);
     fop->write_called = FALSE;
+    fop->small_file = FALSE;
+    fop->full_object_size = 0;
 
     return fop;
 }
@@ -364,6 +367,7 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
 
 /*{{{ hfs_fileop_read_buffer*/
 
+// for each "read" call 
 typedef struct {
     HfsFileOp *fop;
     HfsFileOp_on_buffer_read_cb on_buffer_read_cb;
@@ -384,7 +388,6 @@ typedef struct {
 
     struct evbuffer *segment_buf; // current segment buffer
 
-    gboolean small_file; // send HEAD and then GET for a full file
 } FileOpReadData;
 
 static void hfs_fileop_read_get_buffer (FileOpReadData *read_data);
@@ -449,17 +452,24 @@ static void hfs_fileop_read_on_read_cb (HttpConnection *con, void *ctx,
         read_data->ino, out_len, read_data->segment_size * read_data->segment_id, (unsigned char *) out_buf);
 
     // a full file is received
+    /*
     if (read_data->small_file) {
-        // done 
-        read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)out_buf, out_len);
+        // verify
+        if (out_len != read_data->req_size) {
+            LOG_err (FOP_LOG, "Read buffer does not match requested size: %zu != %zu",
+                out_len, read_data->req_size);
+        }
+
+        read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)out_buf, read_data->req_size);
         evbuffer_free (read_data->read_buf);
         evbuffer_free (read_data->segment_buf);
         g_free (read_data);
     } else {
+    */
         // add buf to segment
         evbuffer_add (read_data->segment_buf, out_buf, out_len);
         hfs_fileop_read_get_buffer (read_data);
-    }
+    //}
 
     if (free_buf)
         g_free (out_buf);
@@ -480,7 +490,7 @@ static void hfs_fileop_read_on_con_cb (gpointer client, gpointer ctx)
     fop = read_data->fop;
 
     // get full file
-    if (read_data->small_file) 
+    if (fop->small_file) 
         req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), 
             fop->fname);
     // get segment
@@ -522,6 +532,14 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
     // current segment buf length
     segment_len = evbuffer_get_length (read_data->segment_buf);
 
+    if (fop->small_file) {
+        if (read_data->current_off + read_data->req_size > fop->full_object_size)
+            if (read_data->current_off > fop->full_object_size)
+                read_data->req_size = 0;
+            else
+                read_data->req_size = fop->full_object_size  - read_data->current_off;
+    }
+
     LOG_debug (FOP_LOG, "current segment: %zu, segment len: %zu,  requested segment: %zu, req size: %zu, got so far: %zu of %zu, current off: %zu",
         read_data->segment_id, segment_len, segment_start_id, read_data->size_left, evbuffer_get_length (read_data->read_buf), read_data->req_size,
         read_data->current_off);
@@ -534,6 +552,12 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
     if (buf) {
         // empty buffer
         evbuffer_drain (read_data->segment_buf, -1);
+
+        // verify
+        if (read_data->size_left != read_data->req_size) {
+            LOG_err (FOP_LOG, "Read buffer does not match requested size: %zu != %zu",
+               read_data->size_left , read_data->req_size);
+        }
 
         read_data->on_buffer_read_cb (read_data->ctx, TRUE, (char *)buf, read_data->size_left);
         g_free (buf);
@@ -659,10 +683,24 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
         hfs_fileop_read_get_buffer (read_data);
     // a small file
     } else {
+        const char *size_header = evhttp_find_header (headers, "Content-Length");
 
         LOG_debug (FOP_LOG, "Downloading a small file");
+        
+        if (size_header) {
+            fop->full_object_size = strtoll ((char *)size_header, NULL, 10);
+        } else {
+            LOG_err (FOP_LOG, "Failed to retrieve header !");
+            read_data->on_buffer_read_cb (read_data->ctx, FALSE, NULL, 0);
+            evbuffer_free (read_data->read_buf);
+            evbuffer_free (read_data->segment_buf);
+            g_free (read_data);
+            return;
+        }
 
-        read_data->small_file = TRUE;
+        
+
+        fop->small_file = TRUE;
 
         if (!client_pool_get_client (application_get_read_client_pool (fop->app), hfs_fileop_read_on_con_cb, read_data)) {
             LOG_err (FOP_LOG, "Failed to get HTTP client !");
@@ -735,7 +773,6 @@ void hfs_fileop_read_buffer (HfsFileOp *fop,
     read_data->segment_id = 0;
     read_data->ino = ino;
     read_data->segment_size = fop->segment_size;
-    read_data->small_file = FALSE;
 
     if (!fop->manifest_handled) {
         // get HTTP connection to download manifest or a small file

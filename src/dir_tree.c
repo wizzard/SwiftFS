@@ -12,7 +12,7 @@
 
 /*{{{ struct / defines*/
 
-typedef struct {
+struct _DirEntry {
     fuse_ino_t ino;
     fuse_ino_t parent_ino;
     gchar *basename;
@@ -39,7 +39,7 @@ typedef struct {
     HfsFileOp *fop; // file operation object
     gboolean is_segmented; // TRUE if file contains of segments
     gboolean is_updating; // TRUE if getting attributes
-} DirEntry;
+};
 
 struct _DirTree {
     DirEntry *root;
@@ -241,7 +241,7 @@ void dir_tree_stop_update (DirTree *dtree, fuse_ino_t parent_ino)
     g_hash_table_foreach_remove (parent_en->h_dir_tree, dir_tree_stop_update_on_remove_child_cb, dtree);
 }
 
-void dir_tree_update_entry (DirTree *dtree, const gchar *path, DirEntryType type, 
+DirEntry *dir_tree_update_entry (DirTree *dtree, const gchar *path, DirEntryType type, 
     fuse_ino_t parent_ino, const gchar *entry_name, long long size, time_t last_modified)
 {
     DirEntry *parent_en;
@@ -253,7 +253,7 @@ void dir_tree_update_entry (DirTree *dtree, const gchar *path, DirEntryType type
     parent_en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (parent_ino));
     if (!parent_en || parent_en->type != DET_dir) {
         LOG_err (DIR_TREE_LOG, "DirEntry is not a directory ! ino: %"INO_FMT, parent_ino);
-        return;
+        return NULL;
     }
 
     // get child
@@ -264,6 +264,7 @@ void dir_tree_update_entry (DirTree *dtree, const gchar *path, DirEntryType type
         if (en->type != type) {
             LOG_debug (DIR_TREE_LOG, "Enabling segmentation for: %s", entry_name);
             en->is_segmented = TRUE;
+            en->type = DET_file;
         }
     } else {
         mode_t mode;
@@ -273,9 +274,11 @@ void dir_tree_update_entry (DirTree *dtree, const gchar *path, DirEntryType type
         else
             mode = DIR_DEFAULT_MODE;
             
-        dir_tree_add_entry (dtree, entry_name, mode,
+        en = dir_tree_add_entry (dtree, entry_name, mode,
             type, parent_ino, size, last_modified);
     }
+
+    return en;
 }
 
 // let it know that directory cache have to be updated
@@ -445,6 +448,10 @@ typedef struct {
     dir_tree_lookup_cb lookup_cb;
     fuse_req_t req;
     fuse_ino_t ino;
+
+    gboolean not_found;
+    char *name;
+    fuse_ino_t parent_ino;
 } LookupOpData;
 
 static void dir_tree_lookup_on_attr_cb (HttpConnection *con, void *ctx, 
@@ -453,13 +460,13 @@ static void dir_tree_lookup_on_attr_cb (HttpConnection *con, void *ctx,
 {
     LookupOpData *op_data = (LookupOpData *) ctx;
     const unsigned char *size_header;
+    const unsigned char *meta_header;
     DirEntry  *en;
     
     LOG_debug (DIR_TREE_LOG, "Got attributes for ino: %"INO_FMT, op_data->ino);
 
     // release HttpConnection
     http_connection_release (con);
-
 
     en = g_hash_table_lookup (op_data->dtree->h_inodes, GUINT_TO_POINTER (op_data->ino));
     
@@ -479,24 +486,23 @@ static void dir_tree_lookup_on_attr_cb (HttpConnection *con, void *ctx,
         return;
     }
 
-    // get X-Object-Meta-Size header
-    size_header = evhttp_find_header (headers, "X-Object-Meta-Size");
+    // get Content-Length header
+    size_header = evhttp_find_header (headers, "Content-Length");
     if (size_header) {
         //XXX: CacheMng
         en->size = strtoll ((char *)size_header, NULL, 10);
     }
 
-    // get X-Container-Bytes-Used header
-    size_header = evhttp_find_header (headers, "X-Container-Bytes-Used");
-    if (size_header) {
-        //XXX: CacheMng
-        en->size = strtoll ((char *)size_header, NULL, 10);
+    meta_header = evhttp_find_header (headers, "X-Object-Manifest");
+    if (meta_header) {
+        en->is_segmented = TRUE;
     }
     
     op_data->lookup_cb (op_data->req, TRUE, en->ino, en->mode, en->size, en->ctime);
     en->is_updating = FALSE;
     g_free (op_data);
 }
+
 
 //send HTTP HEAD request
 static void dir_tree_lookup_on_con_cb (gpointer client, gpointer ctx)
@@ -541,13 +547,140 @@ static void dir_tree_lookup_on_con_cb (gpointer client, gpointer ctx)
     }
 }
 
+static void dir_tree_lookup_on_not_found_data_cb (HttpConnection *con, void *ctx, 
+    const gchar *buf, size_t buf_len, 
+    struct evkeyvalq *headers, gboolean success)
+{
+    LookupOpData *op_data = (LookupOpData *) ctx;
+    const unsigned char *size_header;
+    const unsigned char *meta_header;
+    const unsigned char *last_modified_header;
+    DirEntry *en;
+    time_t last_modified = time (NULL);
+    DirEntry *parent_en;
+    long long size;
+    gboolean is_segmented = FALSE;
+    
+    LOG_debug (DIR_TREE_LOG, "Got attributes for ino: %"INO_FMT, op_data->ino);
+
+    // release HttpConnection
+    http_connection_release (con);
+
+    // file not found
+    if (!success) {
+        LOG_err (DIR_TREE_LOG, "FileEntry not found %s", op_data->name);
+
+        op_data->lookup_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data->name);
+        g_free (op_data);
+        return;
+    }
+
+    parent_en = g_hash_table_lookup (op_data->dtree->h_inodes, GUINT_TO_POINTER (op_data->parent_ino));
+    if (!parent_en) {
+        LOG_err (DIR_TREE_LOG, "Parent not found for ino: %"INO_FMT" !", op_data->parent_ino);
+
+        op_data->lookup_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data->name);
+        g_free (op_data);
+        return;
+    }
+
+    // get Content-Length header
+    size_header = evhttp_find_header (headers, "Content-Length");
+    if (size_header) {
+        size = strtoll ((char *)size_header, NULL, 10);
+    }
+
+    meta_header = evhttp_find_header (headers, "X-Object-Manifest");
+    if (meta_header) {
+        is_segmented = TRUE;
+    }
+
+    last_modified_header = evhttp_find_header (headers, "Last-Modified");
+    if (last_modified_header) {
+        struct tm tmp;
+        strptime (last_modified_header, "%FT%T", &tmp);
+        last_modified = mktime (&tmp);
+    }
+
+    en = dir_tree_update_entry (op_data->dtree, parent_en->fullpath, DET_file, 
+        op_data->parent_ino, op_data->name, size, last_modified);
+
+    if (!en) {
+        LOG_err (DIR_TREE_LOG, "Failed to create FileEntry parent ino: %"INO_FMT" !", op_data->parent_ino);
+
+        op_data->lookup_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data->name);
+        g_free (op_data);
+        return;
+    }
+
+    en->is_segmented = is_segmented;
+
+    op_data->lookup_cb (op_data->req, TRUE, en->ino, en->mode, en->size, en->ctime);
+    g_free (op_data->name);
+    g_free (op_data);
+}
+
+//send HTTP HEAD request when a file "not found"
+static void dir_tree_lookup_on_not_found_con_cb (gpointer client, gpointer ctx)
+{
+    HttpConnection *con = (HttpConnection *) client;
+    LookupOpData *op_data = (LookupOpData *) ctx;
+    gchar *req_path = NULL;
+    gboolean res;
+    DirEntry *parent_en;
+    gchar *fullpath;
+
+    parent_en = g_hash_table_lookup (op_data->dtree->h_inodes, GUINT_TO_POINTER (op_data->parent_ino));
+    if (!parent_en) {
+        LOG_err (DIR_TREE_LOG, "Parent not found for ino: %"INO_FMT" !", op_data->parent_ino);
+
+        op_data->lookup_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data->name);
+        g_free (op_data);
+        return;
+    }
+
+    http_connection_acquire (con);
+
+    if (op_data->parent_ino == FUSE_ROOT_ID)
+        fullpath = g_strdup_printf ("%s", op_data->name);
+    else
+        fullpath = g_strdup_printf ("%s/%s", parent_en->fullpath, op_data->name);
+
+    // send segment buffer
+    req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app),
+        fullpath);
+
+    g_free (fullpath);
+
+    res = http_connection_make_request_to_storage_url (con, 
+        req_path, "HEAD", NULL,
+        dir_tree_lookup_on_not_found_data_cb,
+        op_data
+    );
+
+    g_free (req_path);
+
+    if (!res) {
+        LOG_err (DIR_TREE_LOG, "Failed to create HTTP request !");
+        http_connection_release (con);
+        op_data->lookup_cb (op_data->req, FALSE, 0, 0, 0, 0);
+        g_free (op_data->name);
+        g_free (op_data);
+        return;
+    }
+}
+
 // lookup entry and return attributes
 void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
     dir_tree_lookup_cb lookup_cb, fuse_req_t req)
 {
     DirEntry *dir_en, *en;
     
-    LOG_err (DIR_TREE_LOG, "Looking up for '%s' in directory ino: %d", name, parent_ino);
+    LOG_debug (DIR_TREE_LOG, "Looking up for '%s' in directory ino: %d", name, parent_ino);
     
     dir_en = g_hash_table_lookup (dtree->h_inodes, GUINT_TO_POINTER (parent_ino));
     
@@ -560,8 +693,26 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
 
     en = g_hash_table_lookup (dir_en->h_dir_tree, name);
     if (!en) {
-        LOG_err (DIR_TREE_LOG, "Entry '%s' not found !", name);
-        lookup_cb (req, FALSE, 0, 0, 0, 0);
+        LookupOpData *op_data;
+
+        //XXX: CacheMng !
+
+        op_data = g_new0 (LookupOpData, 1);
+        op_data->dtree = dtree;
+        op_data->lookup_cb = lookup_cb;
+        op_data->req = req;
+        op_data->not_found = TRUE;
+        op_data->parent_ino = parent_ino;
+        op_data->name = g_strdup (name);
+
+        LOG_debug (DIR_TREE_LOG, "Entry not found, requesting for attributes, name: %s", name);
+
+        if (!client_pool_get_client (application_get_ops_client_pool (dtree->app), dir_tree_lookup_on_not_found_con_cb, op_data)) {
+            LOG_err (DIR_TREE_LOG, "Failed to get HTTP client !");
+            lookup_cb (req, FALSE, 0, 0, 0, 0);
+            g_free (op_data->name);
+            g_free (op_data);
+        }
         return;
     }
     
@@ -585,6 +736,7 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
         op_data->lookup_cb = lookup_cb;
         op_data->req = req;
         op_data->ino = en->ino;
+        op_data->not_found = FALSE;
 
         en->is_updating = TRUE;
 
