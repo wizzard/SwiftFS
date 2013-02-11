@@ -23,7 +23,7 @@ class App ():
         self.write_cache_dir = "/tmp/test_segments/write_cache/"
         self.read_dir = "/tmp/test_segments/read/"
         self.read_cache_dir = "/tmp/test_segments/read_cache/"
-        self.nr_tests = 20
+        self.nr_tests = 1
         self.l_files = []
         #self.segment_size = 5242880
         self.segment_size = "2034"
@@ -34,10 +34,10 @@ class App ():
         if pid == 0:
             base_path = os.path.join(os.path.dirname(__file__), '..')
             bin_path = os.path.join(base_path, "src")
-            cache = "--cache_dir=" + cache_dir
-            test_key = "--key_file=test.key"
+            cache = "--cache-dir=" + cache_dir
+            test_key = "--key-file=test.key"
             #cache = "--disable_cache"
-            args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", cache, test_key, "--disable_stats", "--segment_size", self.segment_size, "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
+            args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", cache, test_key, "--disable-stats", "--segment-size", self.segment_size, "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
             sys.stdout = open (log_file, 'w')
             os.execv(args[0], args)
         else:

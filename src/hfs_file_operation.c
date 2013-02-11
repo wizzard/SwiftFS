@@ -111,24 +111,19 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
         // mark that a manifest file is handled (for small files - mark as handled as well)
         fop->manifest_handled = TRUE;
 
+        LOG_debug (FOP_LOG, "segment buffer is empty !");
+
         // send manifest for a "large" file
         if (fop->segment_count > 0) {
             gchar *tmp;
-
 
             tmp = g_strdup_printf ("%s/%s/", application_get_container_name (con->app), 
                 fop->fname);
             http_connection_add_output_header (con, "X-Object-Manifest", tmp);
             g_free (tmp);
 
-
             g_snprintf (s, sizeof (s), "%zu", fop->segment_size);
             http_connection_add_output_header (con, "X-Object-Meta-Segment-Size", s);
-
-
-            if (conf_get_boolean (fop->conf, "encryption.enabled")) {
-                http_connection_add_output_header (con, "X-Object-Meta-Encrypted", "True");
-            }
 
             req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), fop->fname);
         // an empty file
@@ -139,6 +134,7 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
 
     // segment buffer contains data. Check if a file is "small" or "large"
     } else {
+        LOG_debug (FOP_LOG, "segment buffer contains remaining data !");
         
         // send segment
         if (fop->segment_count > 0) {
@@ -152,12 +148,13 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
                 fop->fname);
             // mark that a manifest file is handled (for small files - mark as handled as well)
             fop->manifest_handled = TRUE;
-
         }
     }
 
     // encryption
+    // XXX: CHECK it it's needed !
     if (conf_get_boolean (fop->conf, "encryption.enabled")) {
+        /*
         unsigned char *in_buf;
         unsigned char *out_buf;
         int len;
@@ -169,6 +166,7 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
         evbuffer_add (fop->segment_buf, out_buf, len);
         g_free (out_buf);
 
+        */
         // set header
         http_connection_add_output_header (con, "X-Object-Meta-Encrypted", "True");
     }
@@ -588,10 +586,13 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
     // check that request does not exceed the object size
     if (read_data->current_off + read_data->size_left > fop->full_object_size) {
         LOG_err (FOP_LOG, "Updating request size, object size: %lu", fop->full_object_size);
-        if (read_data->current_off > fop->full_object_size)
+        if (read_data->current_off > fop->full_object_size) {
             read_data->size_left = 0;
-        else 
+            read_data->original_req_size = 0;
+        } else {
             read_data->size_left = fop->full_object_size - read_data->current_off;
+            read_data->original_req_size = fop->full_object_size - read_data->current_off;
+        }
     }
 
     LOG_debug (FOP_LOG, "current segment: %zu, segment len: %zu,  requested segment: %zu, req size: %zu, got so far: %zu of %zu, current off: %zu",

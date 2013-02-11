@@ -489,7 +489,12 @@ static void dir_tree_lookup_on_attr_cb (HttpConnection *con, void *ctx,
     // get Content-Length header
     size_header = evhttp_find_header (headers, "Content-Length");
     if (size_header) {
-        //XXX: CacheMng
+        en->size = strtoll ((char *)size_header, NULL, 10);
+    }
+
+    // is Meta-Size found - use it's value as the size of object
+    size_header = evhttp_find_header (headers, "X-Object-Meta-Size");
+    if (size_header) {
         en->size = strtoll ((char *)size_header, NULL, 10);
     }
 
@@ -726,7 +731,6 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
     LOG_debug (DIR_TREE_LOG, "segmented: %d  updating: %d", en->is_segmented, en->is_updating);
 
     // get extra info for segmented file
-    /*
     if (en->is_segmented && !en->is_updating) {
         LookupOpData *op_data;
 
@@ -752,7 +756,6 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
 
         return;
     }
-    */
 
     // hide it
     if (en->is_modified) {
