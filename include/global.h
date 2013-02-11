@@ -108,4 +108,7 @@ LogLevel log_level;
 #define OFF_FMT "ju"
 #define INO_FMT "llu"
 
+#define ENC_SALT_1 4072
+#define ENC_SALT_2 3751
+
 #endif

@@ -35,9 +35,9 @@ class App ():
             base_path = os.path.join(os.path.dirname(__file__), '..')
             bin_path = os.path.join(base_path, "src")
             cache = "--cache_dir=" + cache_dir
+            test_key = "--key_file=test.key"
             #cache = "--disable_cache"
-            #args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", "--disable_cache", "--disable_stats", "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
-            args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", cache, "--disable_stats", "--segment_size", self.segment_size, "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
+            args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", cache, test_key, "--disable_stats", "--segment_size", self.segment_size, "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
             sys.stdout = open (log_file, 'w')
             os.execv(args[0], args)
         else:

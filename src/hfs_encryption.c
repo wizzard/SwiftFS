@@ -64,8 +64,8 @@ HfsEncryption *hfs_encryption_create (Application *app)
 
     LOG_debug (ENC_LOG, "Loaded key, size: %zu", key_data_len);
 
-    salt_ints[0] = conf_get_uint (enc->conf, "encryption.salt1");
-    salt_ints[1] = conf_get_uint (enc->conf, "encryption.salt2");
+    salt_ints[0] = ENC_SALT_1;
+    salt_ints[1] = ENC_SALT_2;
     salt = (unsigned char *)&salt_ints;
 
     i = EVP_BytesToKey (EVP_aes_256_cbc (), EVP_sha1 (), salt, key_data, key_data_len, nrounds, key, iv);
