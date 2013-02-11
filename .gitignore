@@ -9,6 +9,7 @@ bin/*
 *.swf
 *.o
 tests/file.in
+tests/test.key
 src/test_keys.sh
 src/hydrafs
 src/valgrind*
