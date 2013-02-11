@@ -745,7 +745,7 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
 
         en->is_updating = TRUE;
 
-        LOG_debug (DIR_TREE_LOG, "Requesting for attributes, ino: %"INO_FMT, en->ino);
+        LOG_debug (DIR_TREE_LOG, "Entry is segmented, getting information, ino: %"INO_FMT, en->ino);
 
         if (!client_pool_get_client (application_get_ops_client_pool (dtree->app), dir_tree_lookup_on_con_cb, op_data)) {
             LOG_err (DIR_TREE_LOG, "Failed to get HTTP client !");
@@ -758,9 +758,32 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
     }
 
     // hide it
-    if (en->is_modified) {
+    if (en->is_modified && !en->is_updating) {
+
+        LookupOpData *op_data;
+
+        //XXX: CacheMng !
+
+        op_data = g_new0 (LookupOpData, 1);
+        op_data->dtree = dtree;
+        op_data->lookup_cb = lookup_cb;
+        op_data->req = req;
+        op_data->ino = en->ino;
+        op_data->not_found = FALSE;
+
+        en->is_updating = TRUE;
+
         LOG_debug (DIR_TREE_LOG, "Entry '%s' is modified !", name);
-        lookup_cb (req, TRUE, en->ino, en->mode, en->size, en->ctime);
+        
+        
+        if (!client_pool_get_client (application_get_ops_client_pool (dtree->app), dir_tree_lookup_on_con_cb, op_data)) {
+            LOG_err (DIR_TREE_LOG, "Failed to get HTTP client !");
+            lookup_cb (req, FALSE, 0, 0, 0, 0);
+            en->is_updating = FALSE;
+            g_free (op_data);
+        }
+        
+        // lookup_cb (req, TRUE, en->ino, en->mode, en->size, en->ctime);
         return;
     }
 

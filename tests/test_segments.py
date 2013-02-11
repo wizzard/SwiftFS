@@ -23,7 +23,7 @@ class App ():
         self.write_cache_dir = "/tmp/test_segments/write_cache/"
         self.read_dir = "/tmp/test_segments/read/"
         self.read_cache_dir = "/tmp/test_segments/read_cache/"
-        self.nr_tests = 1
+        self.nr_tests = 2
         self.l_files = []
         #self.segment_size = 5242880
         self.segment_size = "2034"
@@ -35,9 +35,9 @@ class App ():
             base_path = os.path.join(os.path.dirname(__file__), '..')
             bin_path = os.path.join(base_path, "src")
             cache = "--cache-dir=" + cache_dir
-            test_key = "--key-file=test.key"
+            #test_key = "--key-file=test.key"
             #cache = "--disable_cache"
-            args = [os.path.join(bin_path, "hydrafs"), "-f", "-v", cache, test_key, "--disable-stats", "--segment-size", self.segment_size, "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
+            args = [os.path.join(bin_path, "hydrafs"), "-f", cache, "--disable-stats", "--segment-size", self.segment_size, "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
             sys.stdout = open (log_file, 'w')
             os.execv(args[0], args)
         else:
@@ -49,12 +49,10 @@ class App ():
             args = ["fusermount", "-u", mnt_dir]
             os.execv(args[0], args)
 
-
     def run (self):
-        try:
-            shutil.rmtree (self.base_dir)
-        except:
-            None
+        if os.path.isdir (self.base_dir):
+            print "Directory", self.base_dir, "exists !"
+            print "Please remove it and try again !"
 
         try:
             os.mkdir (self.base_dir);
@@ -64,16 +62,10 @@ class App ():
             os.mkdir (self.dst_dir);
             os.mkdir (self.write_cache_dir);
             os.mkdir (self.read_cache_dir);
-        except:
-            print "Failed to create temp dirs !"
+        except Exception, e:
+            print "Failed to create temp dirs !", e
             return
         
-        try:
-            unmount (self.write_dir)
-            unmount (self.read_dir)
-        except:
-            None
-
         self.write_pid = self.start_hydrafs (self.write_dir, "./write.log", self.write_cache_dir)
         self.read_pid = self.start_hydrafs (self.read_dir, "./read.log", self.read_cache_dir)
         
@@ -88,6 +80,8 @@ class App ():
         print "Checking files .."
         failed = False
         for entry in self.l_files:
+            time.sleep (1)
+            print >> sys.stderr, ">> CHECKING:", entry
             res = self.check_file (entry)
             if res == False:
                 print "Test failed !"
@@ -101,23 +95,22 @@ class App ():
             print "Killing processes .."
             os.kill (self.write_pid, signal.SIGINT)
             os.kill (self.read_pid, signal.SIGINT)
-        except:
-            None
+        except Exception, e:
+            print "Failed to kill processes !", e
 
         time.sleep (2)
 
         try:
-            unmount (self.write_dir)
-            unmount (self.read_dir)
-        except:
-            None
+            self.unmount (self.write_dir)
+            self.unmount (self.read_dir)
+        except Exception, e:
+            print "Failed to unmount !", e
         
         if failed == False:
             try:
                 shutil.rmtree (self.base_dir)
             except:
                 None
-
 
     def create_file (self, fname, flen):
         fout = open (fname, 'w')
@@ -141,37 +134,45 @@ class App ():
     def create_files (self):
 
         # tiny files < 4kb
-        for i in range (0, self.nr_tests):
-            fname = self.str_gen ()
-            flen = random.randint (1, 1024 * 4)
-            self.create_file (self.src_dir + fname, flen)
-            self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
+        #for i in range (0, self.nr_tests):
+        #    fname = self.str_gen ()
+        #    flen = random.randint (1, 1024 * 4)
+        #    self.create_file (self.src_dir + fname, flen)
+        #   self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
 
-        # small files < 5mb
+        # small files < 1mb
         for i in range (0, self.nr_tests):
             fname = self.str_gen ()
-            flen = random.randint (1, 1024 * 1024 * 5)
+            flen = random.randint (1, 1024 * 1024 * 1)
             self.create_file (self.src_dir + fname, flen)
             self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
 
         # medium files 6mb - 20mb
-        for i in range (0, self.nr_tests):
-            fname = self.str_gen ()
-            flen = random.randint (1024 * 1024 * 6, 1024 * 1024 * 20)
-            self.create_file (self.src_dir + fname, flen)
-            self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
+        #for i in range (0, self.nr_tests):
+        #    fname = self.str_gen ()
+        #    flen = random.randint (1024 * 1024 * 6, 1024 * 1024 * 20)
+        #    self.create_file (self.src_dir + fname, flen)
+        #    self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
         
         # large files 30mb - 40mb
-        for i in range (0, self.nr_tests):
-            fname = self.str_gen ()
-            flen = random.randint (1024 * 1024 * 30, 1024 * 1024 * 40)
-            self.create_file (self.src_dir + fname, flen)
-            self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
+        #for i in range (0, self.nr_tests):
+        #    fname = self.str_gen ()
+        #    flen = random.randint (1024 * 1024 * 30, 1024 * 1024 * 40)
+        #    self.create_file (self.src_dir + fname, flen)
+        #    self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
     
 
     def check_file (self, entry):
         out_src_name = self.write_dir + os.path.basename (entry["name"])
-        shutil.copy (entry["name"], out_src_name)
+        print >> sys.stderr, ">> Copying ", entry["name"], " to: ", out_src_name
+
+        for i in range (0, 10):
+            try:
+                time.sleep (5)
+                shutil.copy (entry["name"], out_src_name)
+                break
+            except:
+                print "File not found, sleeping .."
         
         in_dst_name = self.read_dir + os.path.basename (entry["name"])
 
@@ -183,11 +184,11 @@ class App ():
         # write can take some extra time (due file release does not wait)
         for i in range (0, 10):
             try:
+                time.sleep (5)
                 with open(in_dst_name) as f: pass
                 break;
             except:
                 print "File not found, sleeping ..", in_dst_name
-                time.sleep (5)
 
         try:
             shutil.copy (in_dst_name, out_dst_name)

@@ -24,7 +24,7 @@ int main(int argc, char **argv)
 {
     FILE *fin, *fout;
     HfsEncryption *enc;
-    int bytes_read, written;
+    int bytes_read, written, in_bytes, out_bytes;
     int len;
     unsigned char buf[BUFFER_SIZE];
 
@@ -44,8 +44,6 @@ int main(int argc, char **argv)
     
     conf_add_boolean (_app->conf, "encryption.enabled", TRUE);
     conf_add_string (_app->conf, "encryption.key_file", "file.in");
-    conf_add_uint (_app->conf, "encryption.salt1", 1234);
-    conf_add_uint (_app->conf, "encryption.salt2", 5678);
 
     fin = fopen (argv[1], "r");
     g_assert (fin);
@@ -59,10 +57,14 @@ int main(int argc, char **argv)
         unsigned char *in;
         unsigned char *out;
         
-        in =  hfs_encryption_encrypt (enc, buf, &bytes_read);
-        out = hfs_encryption_decrypt (enc, in, &bytes_read);
+        in_bytes = bytes_read;
+        in =  hfs_encryption_encrypt (enc, buf, &in_bytes);
+        out_bytes = in_bytes;
+        out = hfs_encryption_decrypt (enc, in, &out_bytes);
 
-        written = fwrite (out, 1, bytes_read, fout);
+        LOG_debug (ENC_TEST, "In bytes: %d Out bytes: %d  Orig: %d", in_bytes, out_bytes, bytes_read);
+
+        written = fwrite (out, 1, out_bytes, fout);
         free (in);
         free (out);
     }

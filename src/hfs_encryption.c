@@ -93,6 +93,7 @@ void hfs_encryption_destroy (HfsEncryption *enc)
 
 unsigned char *hfs_encryption_encrypt (HfsEncryption *enc, unsigned char *buf, int *len)
 {
+    // padding 16 bytes
     int c_len = *len + AES_BLOCK_SIZE, f_len = 0;
     unsigned char *out;
     

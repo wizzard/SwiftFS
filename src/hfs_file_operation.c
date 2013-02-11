@@ -272,7 +272,6 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
     gboolean res;
     struct evbuffer *seg;
     unsigned char *buf;
-    char s[20];
 
     http_connection_acquire (con);
 
@@ -319,10 +318,6 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
         // set header
         http_connection_add_output_header (con, "X-Object-Meta-Encrypted", "True");
     }
-
-    g_snprintf (s, sizeof (s), "%zu", fop->current_size_orig);
-    // add Meta header with object's size
-    http_connection_add_output_header (con, "X-Object-Meta-Size", s);
 
     res = http_connection_make_request_to_storage_url (con, 
         req_path, "PUT", seg,
@@ -625,7 +620,7 @@ static void hfs_fileop_read_get_buffer (FileOpReadData *read_data)
         g_free (buf);
         return;
     } else {
-        LOG_err (FOP_LOG, "Hit miss");
+        // LOG_err (FOP_LOG, "Hit miss");
     }
 
     // current segment buffer has different ID or empty
