@@ -101,6 +101,7 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
     gchar *req_path = NULL;
     gboolean res;
     gchar s[20];
+    gboolean send_request = TRUE;
 
     LOG_debug (FOP_LOG, "[http_con: %p] Releasing fop, seg count: %zd", con, fop->segment_count);
     
@@ -126,17 +127,23 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
             http_connection_add_output_header (con, "X-Object-Meta-Segment-Size", s);
 
             req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), fop->fname);
+
+            g_snprintf (s, sizeof (s), "%zu", fop->current_size_orig);
+            // add Meta header with object's size
+            http_connection_add_output_header (con, "X-Object-Meta-Size", s);
+
         // an empty file
         } else {
             // do nothing
-            req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), fop->fname);
+            send_request = FALSE;
         }
+
 
     // segment buffer contains data. Check if a file is "small" or "large"
     } else {
         LOG_debug (FOP_LOG, "segment buffer contains remaining data !");
         
-        // send segment
+        // "large file", send segment
         if (fop->segment_count > 0) {
             // send segment buffer, then send manifest (if file is a large)
             req_path = g_strdup_printf ("/%s/%s/%zu", application_get_container_name (con->app), 
@@ -146,40 +153,41 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
         } else {
             req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), 
                 fop->fname);
+
             // mark that a manifest file is handled (for small files - mark as handled as well)
             fop->manifest_handled = TRUE;
+
+            g_snprintf (s, sizeof (s), "%zu", fop->current_size_orig);
+            // add Meta header with object's size
+            http_connection_add_output_header (con, "X-Object-Meta-Size", s);
+        }
+
+            // encryption
+        // XXX: CHECK it it's needed !
+        if (conf_get_boolean (fop->conf, "encryption.enabled")) {
+            unsigned char *in_buf;
+            unsigned char *out_buf;
+            int len;
+
+            in_buf = evbuffer_pullup (fop->segment_buf, -1);
+            len = evbuffer_get_length (fop->segment_buf);
+            out_buf = hfs_encryption_encrypt (application_get_encryption (con->app), in_buf, &len);
+            evbuffer_drain (fop->segment_buf, -1);
+            evbuffer_add (fop->segment_buf, out_buf, len);
+            g_free (out_buf);
+            
+            // set header
+            http_connection_add_output_header (con, "X-Object-Meta-Encrypted", "True");
         }
     }
 
-    // encryption
-    // XXX: CHECK it it's needed !
-    if (conf_get_boolean (fop->conf, "encryption.enabled")) {
-        /*
-        unsigned char *in_buf;
-        unsigned char *out_buf;
-        int len;
-
-        in_buf = evbuffer_pullup (fop->segment_buf, -1);
-        len = evbuffer_get_length (fop->segment_buf);
-        out_buf = hfs_encryption_encrypt (application_get_encryption (con->app), in_buf, &len);
-        evbuffer_drain (fop->segment_buf, -1);
-        evbuffer_add (fop->segment_buf, out_buf, len);
-        g_free (out_buf);
-
-        */
-        // set header
-        http_connection_add_output_header (con, "X-Object-Meta-Encrypted", "True");
+    if (send_request) {
+        res = http_connection_make_request_to_storage_url (con, 
+            req_path, "PUT", fop->segment_buf,
+            hfs_fileop_release_on_sent_cb,
+            fop
+        );
     }
-
-    g_snprintf (s, sizeof (s), "%zu", fop->current_size_orig);
-    // add Meta header with object's size
-    http_connection_add_output_header (con, "X-Object-Meta-Size", s);
-
-    res = http_connection_make_request_to_storage_url (con, 
-        req_path, "PUT", fop->segment_buf,
-        hfs_fileop_release_on_sent_cb,
-        fop
-    );
 
     // drain buffer
     evbuffer_drain (fop->segment_buf, -1);
@@ -190,6 +198,13 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
         LOG_err (FOP_LOG, "Failed to create HTTP request !");
         http_connection_release (con);
         return;
+    }
+
+    // or we are done
+    if (!send_request) {
+        // release HttpConnection
+        http_connection_release (con);
+        hfs_fileop_release (fop);
     }
 }
 
@@ -465,6 +480,8 @@ static void hfs_fileop_read_on_read_cb (HttpConnection *con, void *ctx,
     gboolean free_buf = FALSE;
     unsigned char *out_buf;
     int out_len;
+    gboolean is_encrypted = FALSE;
+    const char *encrypted_header = NULL;
     
     LOG_debug (FOP_LOG, "Got %zu bytes for segment: %zu", buf_len, read_data->segment_id);
 
@@ -495,16 +512,23 @@ static void hfs_fileop_read_on_read_cb (HttpConnection *con, void *ctx,
         }
     }
     
+    // make sure object is encrypted
+    encrypted_header = evhttp_find_header (headers, "X-Object-Meta-Encrypted");
+    if (!strcmp (encrypted_header, "True"))
+        is_encrypted = TRUE;
+
     //decrypt
-    if (conf_get_boolean (fop->conf, "encryption.enabled")) {
+    if (conf_get_boolean (fop->conf, "encryption.enabled") && is_encrypted) {
         out_len = buf_len;
         out_buf = hfs_encryption_decrypt (application_get_encryption (con->app), (unsigned char *)buf, &out_len);
         free_buf = TRUE;
-
+        
+        /*
         if (buf_len > out_len) {
             // update requested size !
             read_data->original_req_size = out_len;
         }
+        */
         LOG_debug (FOP_LOG, "Decrypted %d -> %d", buf_len, out_len);
     } else {
         out_buf = buf;
@@ -687,7 +711,7 @@ static void hfs_fileop_read_manifest_on_read_cb (HttpConnection *con, void *ctx,
     int out_len;
     const char *manifest_header;
     const char *size_header;
-    const char *object_size_header = evhttp_find_header (headers, "X-Object-Meta-Size");
+    const char *object_size_header;
 
     LOG_debug (FOP_LOG, "Got %zu bytes for manifest: %zu", buf_len, read_data->segment_id);
 
