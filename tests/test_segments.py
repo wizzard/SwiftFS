@@ -25,8 +25,8 @@ class App ():
         self.read_cache_dir = "/tmp/test_segments/read_cache/"
         self.nr_tests = 2
         self.l_files = []
-        #self.segment_size = 5242880
-        self.segment_size = "2034"
+        self.segment_size = "5242880"
+        #self.segment_size = "2034"
         random.seed (time.time())
 
     def start_hydrafs (self, mnt_dir, log_file, cache_dir):
@@ -35,9 +35,9 @@ class App ():
             base_path = os.path.join(os.path.dirname(__file__), '..')
             bin_path = os.path.join(base_path, "src")
             cache = "--cache-dir=" + cache_dir
-            #test_key = "--key-file=test.key"
+            test_key = "--key-file=test.key"
             #cache = "--disable_cache"
-            args = [os.path.join(bin_path, "hydrafs"), "-f", cache, "--disable-stats", "--segment-size", self.segment_size, "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
+            args = [os.path.join(bin_path, "hydrafs"), "-f", cache, test_key, "--disable-stats", "--segment-size", self.segment_size, "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
             sys.stdout = open (log_file, 'w')
             os.execv(args[0], args)
         else:
@@ -134,11 +134,11 @@ class App ():
     def create_files (self):
 
         # tiny files < 4kb
-        #for i in range (0, self.nr_tests):
-        #    fname = self.str_gen ()
-        #    flen = random.randint (1, 1024 * 4)
-        #    self.create_file (self.src_dir + fname, flen)
-        #   self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
+        for i in range (0, self.nr_tests):
+            fname = self.str_gen ()
+            flen = random.randint (1, 1024 * 4)
+            self.create_file (self.src_dir + fname, flen)
+            self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
 
         # small files < 1mb
         for i in range (0, self.nr_tests):
@@ -148,18 +148,18 @@ class App ():
             self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
 
         # medium files 6mb - 20mb
-        #for i in range (0, self.nr_tests):
-        #    fname = self.str_gen ()
-        #    flen = random.randint (1024 * 1024 * 6, 1024 * 1024 * 20)
-        #    self.create_file (self.src_dir + fname, flen)
-        #    self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
+        for i in range (0, self.nr_tests):
+            fname = self.str_gen ()
+            flen = random.randint (1024 * 1024 * 6, 1024 * 1024 * 20)
+            self.create_file (self.src_dir + fname, flen)
+            self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
         
         # large files 30mb - 40mb
-        #for i in range (0, self.nr_tests):
-        #    fname = self.str_gen ()
-        #    flen = random.randint (1024 * 1024 * 30, 1024 * 1024 * 40)
-        #    self.create_file (self.src_dir + fname, flen)
-        #    self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
+        for i in range (0, self.nr_tests):
+            fname = self.str_gen ()
+            flen = random.randint (1024 * 1024 * 30, 1024 * 1024 * 40)
+            self.create_file (self.src_dir + fname, flen)
+            self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
     
 
     def check_file (self, entry):
