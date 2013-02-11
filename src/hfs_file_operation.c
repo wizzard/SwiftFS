@@ -100,6 +100,7 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
     HfsFileOp *fop = (HfsFileOp *) ctx;
     gchar *req_path = NULL;
     gboolean res;
+    gchar s[20];
 
     LOG_debug (FOP_LOG, "[http_con: %p] Releasing fop, seg count: %zd", con, fop->segment_count);
     
@@ -113,17 +114,13 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
         // send manifest for a "large" file
         if (fop->segment_count > 0) {
             gchar *tmp;
-            gchar s[20];
 
-            g_snprintf (s, sizeof (s), "%zu", fop->current_size_orig);
 
             tmp = g_strdup_printf ("%s/%s/", application_get_container_name (con->app), 
                 fop->fname);
             http_connection_add_output_header (con, "X-Object-Manifest", tmp);
             g_free (tmp);
 
-            // add Meta header with object's size
-            http_connection_add_output_header (con, "X-Object-Meta-Size", s);
 
             g_snprintf (s, sizeof (s), "%zu", fop->segment_size);
             http_connection_add_output_header (con, "X-Object-Meta-Segment-Size", s);
@@ -175,6 +172,10 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
         // set header
         http_connection_add_output_header (con, "X-Object-Meta-Encrypted", "True");
     }
+
+    g_snprintf (s, sizeof (s), "%zu", fop->current_size_orig);
+    // add Meta header with object's size
+    http_connection_add_output_header (con, "X-Object-Meta-Size", s);
 
     res = http_connection_make_request_to_storage_url (con, 
         req_path, "PUT", fop->segment_buf,
@@ -273,6 +274,7 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
     gboolean res;
     struct evbuffer *seg;
     unsigned char *buf;
+    char s[20];
 
     http_connection_acquire (con);
 
@@ -319,6 +321,10 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
         // set header
         http_connection_add_output_header (con, "X-Object-Meta-Encrypted", "True");
     }
+
+    g_snprintf (s, sizeof (s), "%zu", fop->current_size_orig);
+    // add Meta header with object's size
+    http_connection_add_output_header (con, "X-Object-Meta-Size", s);
 
     res = http_connection_make_request_to_storage_url (con, 
         req_path, "PUT", seg,

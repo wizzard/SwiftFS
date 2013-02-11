@@ -68,6 +68,9 @@ CacheMng *cache_mng_create (Application *app)
 
 void cache_mng_destroy (CacheMng *cmng)
 {
+    // clean
+    utils_del_tree (conf_get_string (cmng->conf, "filesystem.cache_dir"));
+    
     g_hash_table_destroy (cmng->h_files);
     g_free (cmng);
 }
