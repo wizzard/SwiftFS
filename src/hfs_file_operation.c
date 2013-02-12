@@ -514,7 +514,7 @@ static void hfs_fileop_read_on_read_cb (HttpConnection *con, void *ctx,
     
     // make sure object is encrypted
     encrypted_header = evhttp_find_header (headers, "X-Object-Meta-Encrypted");
-    if (!strcmp (encrypted_header, "True"))
+    if (encrypted_header && !strcmp (encrypted_header, "True"))
         is_encrypted = TRUE;
 
     //decrypt
