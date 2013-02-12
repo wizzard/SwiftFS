@@ -56,7 +56,7 @@ HfsEncryption *hfs_encryption_create (Application *app)
             return NULL;
         }
         
-        memcpy (key + key_data_len, buf, bytes_read);
+        memcpy (key_data + key_data_len, buf, bytes_read);
         key_data_len += bytes_read;
     }
 
