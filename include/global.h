@@ -98,6 +98,7 @@ CacheMng *application_get_cache_mng (Application *app);
 AuthClient *application_get_auth_client (Application *app);
 HfsEncryption *application_get_encryption (Application *app);
 HfsStatsSrv *application_get_stats_srv (Application *app);
+SSL_CTX *application_get_ssl_ctx (Application *app);
 
 #include "log.h" 
 #include "utils.h" 

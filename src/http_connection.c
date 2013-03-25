@@ -80,19 +80,19 @@ static gboolean http_connection_connect (HttpConnection *con, const gchar *stora
 
     // create SSL buffer
     if (uri_is_https (uri)) {
-        SSL_CTX *ssl_ctx;
         SSL *ssl;
 
-		ssl_ctx = SSL_CTX_new (SSLv23_method());
-		ssl = SSL_new (ssl_ctx);
+		ssl = SSL_new (application_get_ssl_ctx (con->app));
 
 		bev = bufferevent_openssl_socket_new (
             application_get_evbase (con->app), 
             -1,
             ssl,
 		    BUFFEREVENT_SSL_CONNECTING,
-		    BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS
+		    BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS
         );
+
+        LOG_err (CON_LOG, "Using SSL !");
     } else {
 		bev = bufferevent_socket_new (
             application_get_evbase (con->app),
@@ -165,7 +165,9 @@ static void http_connection_on_close (struct evhttp_connection *evcon, void *ctx
 {
     HttpConnection *con = (HttpConnection *) ctx;
 
-    LOG_debug (CON_LOG, "[%p] Connection closed !", con);
+    LOG_debug (CON_LOG, "XXXXXXXXXXXXX [%p] Connection closed !", con);
+
+    con->evcon = NULL;
 }
 
 /*{{{ getters */
@@ -329,6 +331,8 @@ gboolean http_connection_make_request_ (HttpConnection *con,
     evhttp_add_header (req->output_headers, "X-Auth-Token", con->auth_token);
     evhttp_add_header (req->output_headers, "Host", evhttp_uri_get_host (uri));
     evhttp_add_header (req->output_headers, "Accept-Encoding", "identify");
+    // ask to keep connection opened
+    evhttp_add_header (req->output_headers, "Connection", "keep-alive");
 
     // add headers
     for (l = g_list_first (con->l_output_headers); l; l = g_list_next (l)) {
@@ -341,8 +345,6 @@ gboolean http_connection_make_request_ (HttpConnection *con,
     http_connection_free_headers (con->l_output_headers);
     con->l_output_headers = NULL;
 
-    // ask to keep connection opened
-    evhttp_add_header (req->output_headers, "Connection", "keep-alive");
 
     if (out_buffer) {
         evbuffer_add_buffer (req->output_buffer, out_buffer);

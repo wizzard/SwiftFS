@@ -1,7 +1,9 @@
 AM_CPPFLAGS = -I$(top_srcdir)/include
+AM_LDADD = -lssl -lcrypto
 bin_PROGRAMS = http_client_test http_client_test_2 client_pool_test
 bin_PROGRAMS += auth_client_test conf_test hfs_encryption_test hfs_range_test
 bin_PROGRAMS += hfs_stats_srv_test
+bin_PROGRAMS += libevent_ssl_test
 EXTRA_DIST = test.conf.xml test_segments.py
 
 http_client_test_SOURCES = $(top_srcdir)/src/http_client.c
@@ -74,3 +76,6 @@ hfs_stats_srv_test_SOURCES += hfs_stats_srv_test.c
 hfs_stats_srv_test_CFLAGS = $(AM_CFLAGS) $(DEPS_CFLAGS)
 hfs_stats_srv_test_LDADD = $(AM_LDADD) $(DEPS_LIBS)
 
+libevent_ssl_test_SOURCES = libevent_ssl_test.c
+libevent_ssl_test_CFLAGS = $(AM_CFLAGS) $(DEPS_CFLAGS)
+libevent_ssl_test_LDADD = $(AM_LDADD) $(DEPS_LIBS)

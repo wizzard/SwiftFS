@@ -16,7 +16,7 @@
 
 <connection>
     <!-- timeout value for HTTP requests (seconds) -->
-    <timeout type="int">20</timeout>
+    <timeout type="int">-1</timeout>
     <!-- number of retries, before giving up (-1 for infinite loop) -->
     <retries type="int">-1</retries>
 </connection>

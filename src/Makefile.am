@@ -20,4 +20,4 @@ hydrafs_SOURCES += hfs_stats_srv.c
 hydrafs_SOURCES += main.c
 
 hydrafs_CFLAGS = $(AM_CFLAGS) $(DEPS_CFLAGS)
-hydrafs_LDADD = $(AM_LDADD) $(DEPS_LIBS)
+hydrafs_LDADD = $(AM_LDADD) $(DEPS_LIBS) -lssl

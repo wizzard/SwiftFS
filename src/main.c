@@ -48,6 +48,7 @@ struct _Application {
     struct event *sigusr1_ev;
 
     HfsStatsSrv *stats_srv;
+    SSL_CTX *ssl_ctx;
 };
 
 // global variable, used by signals handlers
@@ -135,6 +136,12 @@ HfsStatsSrv *application_get_stats_srv (Application *app)
 {
     return app->stats_srv;
 }
+
+SSL_CTX *application_get_ssl_ctx (Application *app)
+{
+    return app->ssl_ctx;
+}
+
 
 /*}}}*/
 
@@ -228,6 +235,8 @@ static void sigint_cb (G_GNUC_UNUSED evutil_socket_t sig, G_GNUC_UNUSED short ev
 static gint application_finish_initialization_and_run (Application *app)
 {
     struct sigaction sigact;
+
+    LOG_debug (APP_LOG, "Auth data received, continue initialization.");
 
     app->cmng = cache_mng_create (app);
     if (!app->cmng) {
@@ -404,6 +413,10 @@ int main (int argc, char *argv[])
         { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
     };
 
+    // init libraries
+    ENGINE_load_builtin_engines ();
+    ENGINE_register_all_complete ();
+
     SSL_library_init();
     ERR_load_crypto_strings();
     SSL_load_error_strings();
@@ -415,18 +428,18 @@ int main (int argc, char *argv[])
         return 1;
     }
 
-    // init libraries
-    ENGINE_load_builtin_engines ();
-    ENGINE_register_all_complete ();
-
     g_random_set_seed (time (NULL));
 
     progname = argv[0];
+
+#warning "XXX"
+    event_enable_debug_mode ();
 
     // init main app structure
     app = g_new0 (Application, 1);
     app->evbase = event_base_new ();
     app->full_container_name = NULL;
+    app->ssl_ctx = SSL_CTX_new (SSLv23_method ());
 
     if (!app->evbase) {
         LOG_err (APP_LOG, "Failed to create event base !");

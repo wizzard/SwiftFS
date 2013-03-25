@@ -731,6 +731,7 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
     LOG_debug (DIR_TREE_LOG, "segmented: %d  updating: %d", en->is_segmented, en->is_updating);
 
     // get extra info for segmented file
+    /* XXX
     if (en->is_segmented && !en->is_updating) {
         LookupOpData *op_data;
 
@@ -756,6 +757,7 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
 
         return;
     }
+    */
 
     // hide it
     if (en->is_modified && !en->is_updating) {
