@@ -60,3 +60,15 @@ Bug reporting
 Please include version of hydrafs and libraries by running:
 
 hydrafs --version
+
+
+Certificates
+-------------
+
+In order to use HTTPS you need to prepare a PEM certificate, which contains all trusted CA certificates.
+For example, if you have 2 different .pem certificates (or .crt), perform the following action:
+
+cat 1.pem >> out.pem
+cat 2.pem >> out.pem
+
+and set path to out.pem in "conenction.ssl_ca_cert" section of configuration file.

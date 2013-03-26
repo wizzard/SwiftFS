@@ -387,7 +387,6 @@ int main (int argc, char *argv[])
     gchar conf_str[1023];
     gchar *conf_path;
     struct stat st;
-	int r;
     gchar **storage_url = NULL;
     gchar **key_file = NULL;
     gchar **cache_dir = NULL;
@@ -413,21 +412,19 @@ int main (int argc, char *argv[])
         { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
     };
 
-    // init libraries
+    // init SSL libraries
+    CRYPTO_set_mem_functions (g_malloc0, g_realloc, g_free);
     ENGINE_load_builtin_engines ();
     ENGINE_register_all_complete ();
+    ERR_load_crypto_strings ();
+    OpenSSL_add_all_algorithms ();
 
-    SSL_library_init();
-    ERR_load_crypto_strings();
-    SSL_load_error_strings();
-    OpenSSL_add_all_algorithms();
-    r = RAND_poll ();
-
-    if (r == 0) {
+    SSL_load_error_strings ();
+    SSL_library_init ();
+    if (RAND_poll () == 0) {
         fprintf(stderr, "RAND_poll() failed.\n");
         return 1;
     }
-
     g_random_set_seed (time (NULL));
 
     progname = argv[0];
@@ -439,7 +436,7 @@ int main (int argc, char *argv[])
     app = g_new0 (Application, 1);
     app->evbase = event_base_new ();
     app->full_container_name = NULL;
-    app->ssl_ctx = SSL_CTX_new (SSLv23_method ());
+
 
     if (!app->evbase) {
         LOG_err (APP_LOG, "Failed to create event base !");
@@ -621,7 +618,6 @@ int main (int argc, char *argv[])
 
 /*}}}*/
     
-
     // try to init Encryption
     if (conf_get_boolean (app->conf, "encryption.enabled")) {
         app->enc = hfs_encryption_create (app);
@@ -633,6 +629,20 @@ int main (int argc, char *argv[])
         app->enc = NULL;
     }
 
+    // init SSL
+    app->ssl_ctx = SSL_CTX_new (TLSv1_client_method ());
+    if (SSL_CTX_load_verify_locations (app->ssl_ctx, conf_get_string (app->conf, "connection.ssl_ca_cert"), NULL) != 1) {
+        LOG_err (APP_LOG, "Couldn't load certificate trust store: %s", conf_get_string (app->conf, "connection.ssl_ca_cert"));
+        return -1;
+    }
+    SSL_CTX_set_verify (app->ssl_ctx, SSL_VERIFY_PEER, NULL);
+
+    // Only support secure cipher suites
+    if (SSL_CTX_set_cipher_list (app->ssl_ctx, conf_get_string (app->conf, "connection.ssl_chipher_list")) != 1) {
+        LOG_err (APP_LOG, "Error loading list of available ciphers: %s", conf_get_string (app->conf, "connection.ssl_chipher_list"));
+        return -1;
+    }
+    
     app->auth_client = auth_client_create (app, app->auth_uri);
     if (!app->auth_client) {
         LOG_err (APP_LOG, "Failed to create AuthClient !");

@@ -19,6 +19,15 @@
     <timeout type="int">-1</timeout>
     <!-- number of retries, before giving up (-1 for infinite loop) -->
     <retries type="int">-1</retries>
+    <!--the list of available 'High' cipher suites minus Anonymous DH and Camellia -->
+    <ssl_chipher_list type="string">RC4-SHA:HIGH:!ADH:!AECDH:!CAMELLIA</ssl_chipher_list>
+    <!-- Path to to a file of CA certificates in PEM format. The file can contain several CA certificates identified by
+        -----BEGIN CERTIFICATE-----
+        ... (CA certificate in base64 encoding) ...
+        -----END CERTIFICATE-----
+       sequences. Before, between, and after the certificates text is allowed which can be used e.g. for descriptions of the certificates.
+    -->
+    <ssl_ca_cert type="string">/home/dev/projects/HydraFS/src/crt/trust.pem</ssl_ca_cert>
 </connection>
 
 <auth>
