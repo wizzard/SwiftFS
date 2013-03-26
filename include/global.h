@@ -49,6 +49,7 @@
 #include <openssl/ssl.h>
 #include <openssl/md5.h>
 #include <openssl/aes.h>
+#include <openssl/x509v3.h>
 
 #include <event2/event.h>
 #include <event2/listener.h>

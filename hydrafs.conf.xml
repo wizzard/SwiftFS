@@ -27,7 +27,9 @@
         -----END CERTIFICATE-----
        sequences. Before, between, and after the certificates text is allowed which can be used e.g. for descriptions of the certificates.
     -->
-    <ssl_ca_cert type="string">/home/dev/projects/HydraFS/src/crt/trust.pem</ssl_ca_cert>
+    <ssl_ca_cert type="string">crt/trust.pem</ssl_ca_cert>
+    <!-- the server's identity in the server's certificate -->
+    <ssl_hostname type="string">no.swift.hydracloud.com</ssl_hostname>
 </connection>
 
 <auth>

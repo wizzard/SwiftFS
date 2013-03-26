@@ -18,4 +18,13 @@ gint uri_get_port (const struct evhttp_uri *uri);
 
 int utils_del_tree (const gchar *path);
 
+typedef enum {
+	MatchFound,
+	MatchNotFound,
+	NoSANPresent,
+	MalformedCertificate,
+	Error
+} HostnameValidationResult;
+HostnameValidationResult validate_hostname (const char *hostname, const X509 *server_cert);
+
 #endif

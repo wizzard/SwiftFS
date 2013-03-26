@@ -373,6 +373,36 @@ static void application_destroy (Application *app)
 	CRYPTO_mem_leaks_fp (stderr);
 }
 
+static int application_on_cert_verify_cb (X509_STORE_CTX *x509_ctx, void *ctx)
+{
+    Application *app = (Application *) ctx;
+    int res;
+    X509 *server_cert;
+    HostnameValidationResult h_res = Error;
+
+    res = X509_verify_cert (x509_ctx);
+    server_cert = X509_STORE_CTX_get_current_cert (x509_ctx);
+
+    if (res != 1 || !server_cert) {
+        LOG_err (APP_LOG, "Failed to validate server identity! Please check server certificate!");
+        event_base_loopexit (app->evbase, NULL);
+        return 0;
+    }
+
+    h_res = validate_hostname (conf_get_string (app->conf, "connection.ssl_hostname"), server_cert);
+    if (h_res != MatchFound) {
+        char cert_str[256];
+        X509_NAME_oneline (X509_get_subject_name (server_cert), cert_str, sizeof (cert_str));
+        LOG_err (APP_LOG, "Failed to validate server identity! Expecting %s hostname, but the certificate contains: %s!",
+                conf_get_string (app->conf, "connection.ssl_hostname"), cert_str);
+        event_base_loopexit (app->evbase, NULL);
+        return 0;
+    }
+
+    // all good !
+    return 1;
+}
+
 int main (int argc, char *argv[])
 {
     Application *app;
@@ -421,7 +451,7 @@ int main (int argc, char *argv[])
 
     SSL_load_error_strings ();
     SSL_library_init ();
-    if (RAND_poll () == 0) {
+    if (! RAND_poll ()) {
         fprintf(stderr, "RAND_poll() failed.\n");
         return 1;
     }
@@ -635,7 +665,9 @@ int main (int argc, char *argv[])
         LOG_err (APP_LOG, "Couldn't load certificate trust store: %s", conf_get_string (app->conf, "connection.ssl_ca_cert"));
         return -1;
     }
+
     SSL_CTX_set_verify (app->ssl_ctx, SSL_VERIFY_PEER, NULL);
+    SSL_CTX_set_cert_verify_callback (app->ssl_ctx, application_on_cert_verify_cb, app);
 
     // Only support secure cipher suites
     if (SSL_CTX_set_cipher_list (app->ssl_ctx, conf_get_string (app->conf, "connection.ssl_chipher_list")) != 1) {
