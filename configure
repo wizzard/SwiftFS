@@ -588,6 +588,8 @@ ac_subst_vars='am__EXEEXT_FALSE
 am__EXEEXT_TRUE
 LTLIBOBJS
 LIBOBJS
+BUILD_TEST_APPS_FALSE
+BUILD_TEST_APPS_TRUE
 DEPS_LIBS
 DEPS_CFLAGS
 PKG_CONFIG_LIBDIR
@@ -690,6 +692,7 @@ ac_user_opts='
 enable_option_checking
 enable_dependency_tracking
 enable_debug_mode
+enable_test_apps
 '
       ac_precious_vars='build_alias
 host_alias
@@ -1326,6 +1329,8 @@ Optional Features:
   --disable-dependency-tracking  speeds up one-time build
   --enable-dependency-tracking   do not reject slow dependency extractors
   --enable-debug-mode     enable support for running in debug mode
+  --enable-test-apps build test applications
+
 
 Some influential environment variables:
   CC          C compiler command
@@ -3871,6 +3876,23 @@ else
     CFLAGS="-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -O2 -march=native"
 fi
 
+# check if we need to build test applications
+# Check whether --enable-test-apps was given.
+if test "${enable_test_apps+set}" = set; then :
+  enableval=$enable_test_apps;
+else
+  enable_test_apps=no
+fi
+
+ if test "$enable_test_apps" = "yes"; then
+  BUILD_TEST_APPS_TRUE=
+  BUILD_TEST_APPS_FALSE='#'
+else
+  BUILD_TEST_APPS_TRUE='#'
+  BUILD_TEST_APPS_FALSE=
+fi
+
+
 ac_config_files="$ac_config_files Makefile src/Makefile include/Makefile tests/Makefile"
 
 cat >confcache <<\_ACEOF
@@ -3996,6 +4018,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${am__fastdepCC_TRUE}" && test -z "${am__fastdepCC_FALSE}"; then
   as_fn_error $? "conditional \"am__fastdepCC\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${BUILD_TEST_APPS_TRUE}" && test -z "${BUILD_TEST_APPS_FALSE}"; then
+  as_fn_error $? "conditional \"BUILD_TEST_APPS\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 

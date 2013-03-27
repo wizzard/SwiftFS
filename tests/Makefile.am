@@ -1,9 +1,11 @@
 AM_CPPFLAGS = -I$(top_srcdir)/include
 AM_LDADD = -lssl -lcrypto
+if BUILD_TEST_APPS
 bin_PROGRAMS = http_client_test http_client_test_2 client_pool_test
 bin_PROGRAMS += auth_client_test conf_test hfs_encryption_test hfs_range_test
 bin_PROGRAMS += hfs_stats_srv_test
 bin_PROGRAMS += libevent_ssl_test
+endif
 EXTRA_DIST = test.conf.xml test_segments.py
 
 http_client_test_SOURCES = $(top_srcdir)/src/http_client.c

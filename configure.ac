@@ -23,5 +23,11 @@ else
     CFLAGS="-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -O2 -march=native"
 fi
 
+# check if we need to build test applications
+AC_ARG_ENABLE([test-apps],
+     AS_HELP_STRING([--enable-test-apps build test applications]),
+	[], [enable_test_apps=no])
+AM_CONDITIONAL([BUILD_TEST_APPS], [test "$enable_test_apps" = "yes"])
+
 AC_CONFIG_FILES(Makefile src/Makefile include/Makefile tests/Makefile)
 AC_OUTPUT
