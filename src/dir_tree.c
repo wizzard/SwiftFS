@@ -731,7 +731,6 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
     LOG_debug (DIR_TREE_LOG, "segmented: %d  updating: %d", en->is_segmented, en->is_updating);
 
     // get extra info for segmented file
-    /* XXX
     if (en->is_segmented && !en->is_updating) {
         LookupOpData *op_data;
 
@@ -757,7 +756,6 @@ void dir_tree_lookup (DirTree *dtree, fuse_ino_t parent_ino, const char *name,
 
         return;
     }
-    */
 
     // hide it
     if (en->is_modified && !en->is_updating) {
@@ -1127,7 +1125,7 @@ static void dir_tree_on_buffer_written_cb (HfsFileOp *fop, gpointer ctx, gboolea
 
     op_data->file_write_cb (op_data->req, success, count);
 
-    LOG_debug (DIR_TREE_LOG, "[fop: %p] buffer written, count: %zu", fop, count);
+    // LOG_debug (DIR_TREE_LOG, "[fop: %p] buffer written, count: %zu", fop, count);
     
     g_free (op_data);
 }
@@ -1154,7 +1152,7 @@ void dir_tree_file_write (DirTree *dtree, fuse_ino_t ino,
     
     fop = en->fop;
     
-    LOG_debug (DIR_TREE_LOG, "[fop: %p] write inode %"INO_FMT", size: %zd, off: %"OFF_FMT, fop, ino, size, off);
+    // LOG_debug (DIR_TREE_LOG, "[fop: %p] write inode %"INO_FMT", size: %zd, off: %"OFF_FMT, fop, ino, size, off);
 
     op_data = g_new0 (FileWriteOpData, 1);
     op_data->file_write_cb = file_write_cb;

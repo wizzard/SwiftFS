@@ -3,6 +3,7 @@
  * file 'LICENSE.txt', which is part of this source code package.
  */
 #include "hfs_stats_srv.h"
+#include "client_pool.h"
 
 typedef struct {
     guint32 bytes;
@@ -59,6 +60,8 @@ HfsStatsSrv *hfs_stats_srv_create (Application *app)
             LOG_err (STATS_LOG, "Failed to bind socket to port %d", port);
             return NULL;
         }
+
+        LOG_msg (STATS_LOG, "Statistics server listening on %s:%d", "0.0.0.0", port);
 
     }
     return srv;
@@ -192,6 +195,25 @@ static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg)
             srv->storage_server_status, srv->storage_server_status_line, srv->storage_server_requests,
             down_speed, hfs_stats_srv_get_up_speed_str (srv)
         );
+    }
+
+    {
+        GString *str;
+
+        str = client_pool_get_task_list (application_get_write_client_pool (srv->app));
+        evbuffer_add_printf (evb, "<BR>Write clients: %s<BR>",
+            str->str);
+        g_string_free (str, TRUE);
+
+        str = client_pool_get_task_list (application_get_read_client_pool (srv->app));
+        evbuffer_add_printf (evb, "Read clients: %s<BR>",
+            str->str);
+        g_string_free (str, TRUE);
+
+        str = client_pool_get_task_list (application_get_ops_client_pool (srv->app));
+        evbuffer_add_printf (evb, "Operations clients: %s<BR>",
+            str->str);
+        g_string_free (str, TRUE);
     }
 
     evhttp_send_reply (req, 200, "OK", evb);

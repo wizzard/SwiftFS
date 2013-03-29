@@ -12,13 +12,16 @@ typedef void (*ClientPool_client_destroy) (gpointer client);
 typedef void (*ClientPool_on_released_cb) (gpointer client, gpointer ctx);
 typedef void (*ClientPool_client_set_on_released_cb) (gpointer client, ClientPool_on_released_cb client_on_released_cb, gpointer ctx);
 typedef gboolean (*ClientPool_client_check_rediness) (gpointer client);
+typedef void (*ClientPool_client_get_info) (gpointer client, GString *str);
 
 ClientPool *client_pool_create (Application *app, 
     gint client_count,
     ClientPool_client_create client_create,
     ClientPool_client_destroy client_destroy,
     ClientPool_client_set_on_released_cb client_set_on_released_cb,
-    ClientPool_client_check_rediness client_check_rediness);
+    ClientPool_client_check_rediness client_check_rediness,
+    ClientPool_client_get_info client_get_info
+);
 
 void client_pool_destroy (ClientPool *pool);
 
@@ -30,4 +33,6 @@ gboolean client_pool_get_client (ClientPool *pool, ClientPool_on_client_ready on
 typedef void (*ClientPool_on_request_done) (gpointer callback_data, gboolean success);
 void client_pool_add_request (ClientPool *pool, 
     ClientPool_on_request_done on_request_done, gpointer callback_data);
+
+GString *client_pool_get_task_list (ClientPool *pool);
 #endif

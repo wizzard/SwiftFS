@@ -19,6 +19,7 @@ typedef struct {
     ClientPool *pool;
     ClientPool_client_check_rediness client_check_rediness; // is client ready for a new request
     ClientPool_client_destroy client_destroy;
+    ClientPool_client_get_info client_get_info;
     gpointer client;
 } PoolClient;
 
@@ -39,7 +40,9 @@ ClientPool *client_pool_create (Application *app,
     ClientPool_client_create client_create, 
     ClientPool_client_destroy client_destroy, 
     ClientPool_client_set_on_released_cb client_set_on_released_cb,
-    ClientPool_client_check_rediness client_check_rediness)
+    ClientPool_client_check_rediness client_check_rediness,
+    ClientPool_client_get_info client_get_info
+)
 {
     ClientPool *pool;
     gint i;
@@ -60,6 +63,7 @@ ClientPool *client_pool_create (Application *app,
         pc->client = client_create (app);
         pc->client_check_rediness = client_check_rediness;
         pc->client_destroy = client_destroy;
+        pc->client_get_info = client_get_info;
         // add to the list
         pool->l_clients = g_list_append (pool->l_clients, pc);
         // add callback
@@ -142,4 +146,19 @@ void client_pool_add_request (ClientPool *pool,
     ClientPool_on_request_done on_request_done, gpointer callback_data)
 {
 
+}
+
+GString *client_pool_get_task_list (ClientPool *pool)
+{
+    GList *l;
+    GString *str;
+    
+    str = g_string_new (NULL);
+
+    for (l = g_list_first (pool->l_clients); l; l = g_list_next (l)) {
+        PoolClient *pc = (PoolClient *) l->data;
+        pc->client_get_info (pc->client, str);
+    }
+
+    return str;
 }

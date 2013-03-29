@@ -121,7 +121,9 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
             tmp = g_strdup_printf ("%s/%s/", application_get_container_name (con->app), 
                 fop->fname);
             http_connection_add_output_header (con, "X-Object-Manifest", tmp);
+            LOG_err (FOP_LOG, "manifest: %s", tmp);
             g_free (tmp);
+
 
             g_snprintf (s, sizeof (s), "%zu", fop->segment_size);
             http_connection_add_output_header (con, "X-Object-Meta-Segment-Size", s);
@@ -244,6 +246,7 @@ static void hfs_fileop_write_on_sent_cb (HttpConnection *con, void *ctx,
     FileOpWriteData *write_data = (FileOpWriteData *) ctx;
     HfsFileOp *fop = NULL;
     
+    LOG_err (FOP_LOG, "Segment uploaded !");
     // release HttpConnection
     http_connection_release (con);
 
@@ -353,6 +356,9 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
         g_free (write_data);
         return;
     }
+
+    // XXX 
+    // write_data->on_buffer_written_cb (write_data->fop, write_data->ctx, TRUE, write_data->buf_size);
 }
 
 // Add data to segment buffer

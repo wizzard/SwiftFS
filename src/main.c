@@ -422,6 +422,7 @@ int main (int argc, char *argv[])
     gchar **cache_dir = NULL;
     gboolean disable_stats = FALSE;
     gboolean disable_cache = FALSE;
+    gboolean disable_crt_validation = FALSE;
     guint32 segment_size = 0;
 
     conf_path = g_build_filename (SYSCONFDIR, "hydrafs.conf", NULL); 
@@ -437,6 +438,7 @@ int main (int argc, char *argv[])
         { "disable-stats", 0, 0, G_OPTION_ARG_NONE, &disable_stats, "Flag. Disable stats server.", NULL },
         { "segment-size", 0, 0, G_OPTION_ARG_INT, &segment_size, "Set file segment size (in bytes).", NULL },
         { "key-file", 'k', 0, G_OPTION_ARG_STRING_ARRAY, &key_file, "Path to key file. Enables encryption.", NULL },
+        { "disable-crt-validation", 0, 0, G_OPTION_ARG_NONE, &disable_crt_validation, "Flag. Disable server certificate and hostname validation.", NULL },
         { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose, "Verbose output.", NULL },
         { "version", 0, 0, G_OPTION_ARG_NONE, &version, "Show application version and exit.", NULL },
         { NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
@@ -646,6 +648,11 @@ int main (int argc, char *argv[])
         conf_add_boolean (app->conf, "encryption.enabled", TRUE);
     }
 
+    if (disable_crt_validation) {
+        LOG_err (APP_LOG, "Disabling server certificate validation!");
+        conf_add_boolean (app->conf, "connection.ssl_enable_validation", FALSE);
+    }
+
 /*}}}*/
     
     // try to init Encryption
@@ -661,18 +668,24 @@ int main (int argc, char *argv[])
 
     // init SSL
     app->ssl_ctx = SSL_CTX_new (TLSv1_client_method ());
-    if (SSL_CTX_load_verify_locations (app->ssl_ctx, conf_get_string (app->conf, "connection.ssl_ca_cert"), NULL) != 1) {
-        LOG_err (APP_LOG, "Couldn't load certificate trust store: %s", conf_get_string (app->conf, "connection.ssl_ca_cert"));
-        return -1;
-    }
-
-    SSL_CTX_set_verify (app->ssl_ctx, SSL_VERIFY_PEER, NULL);
-    SSL_CTX_set_cert_verify_callback (app->ssl_ctx, application_on_cert_verify_cb, app);
-
     // Only support secure cipher suites
     if (SSL_CTX_set_cipher_list (app->ssl_ctx, conf_get_string (app->conf, "connection.ssl_chipher_list")) != 1) {
         LOG_err (APP_LOG, "Error loading list of available ciphers: %s", conf_get_string (app->conf, "connection.ssl_chipher_list"));
         return -1;
+    }
+
+    if (conf_get_boolean (app->conf, "connection.ssl_enable_validation")) {
+        // Only support secure cipher suites
+        if (SSL_CTX_set_cipher_list (app->ssl_ctx, conf_get_string (app->conf, "connection.ssl_chipher_list")) != 1) {
+            LOG_err (APP_LOG, "Error loading list of available ciphers: %s", conf_get_string (app->conf, "connection.ssl_chipher_list"));
+            return -1;
+        }
+        SSL_CTX_set_verify (app->ssl_ctx, SSL_VERIFY_PEER, NULL);
+        SSL_CTX_set_cert_verify_callback (app->ssl_ctx, application_on_cert_verify_cb, app);
+        if (SSL_CTX_load_verify_locations (app->ssl_ctx, conf_get_string (app->conf, "connection.ssl_ca_cert"), NULL) != 1) {
+            LOG_err (APP_LOG, "Couldn't load certificate trust store: %s", conf_get_string (app->conf, "connection.ssl_ca_cert"));
+            return -1;
+        }
     }
     
     app->auth_client = auth_client_create (app, app->auth_uri);
@@ -702,7 +715,8 @@ int main (int argc, char *argv[])
         http_connection_create,
         http_connection_destroy,
         http_connection_set_on_released_cb,
-        http_connection_check_rediness
+        http_connection_check_rediness,
+        http_connection_get_info
         );
 
 
@@ -717,7 +731,8 @@ int main (int argc, char *argv[])
         http_connection_create,
         http_connection_destroy,
         http_connection_set_on_released_cb,
-        http_connection_check_rediness
+        http_connection_check_rediness,
+        http_connection_get_info
         );
     if (!app->write_client_pool) {
         LOG_err (APP_LOG, "Failed to create ClientPool !");
@@ -730,7 +745,8 @@ int main (int argc, char *argv[])
         http_connection_create,
         http_connection_destroy,
         http_connection_set_on_released_cb,
-        http_connection_check_rediness
+        http_connection_check_rediness,
+        http_connection_get_info
         );
     if (!app->ops_client_pool) {
         LOG_err (APP_LOG, "Failed to create ClientPool !");

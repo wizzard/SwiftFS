@@ -192,7 +192,7 @@ static void hfs_fuse_on_read (evutil_socket_t fd, short what, void *arg)
         LOG_err (FUSE_LOG, "fuse_chan_recv failed: %s", strerror(-res));
     
     if (res > 0) {
-        LOG_debug (FUSE_LOG, "got %d bytes from /dev/fuse", res);
+        // LOG_debug (FUSE_LOG, "got %d bytes from /dev/fuse", res);
 
         fuse_session_process (hfs_fuse->session, hfs_fuse->recv_buf, res, ch);
     }
@@ -474,7 +474,7 @@ static void hfs_fuse_read (fuse_req_t req, fuse_ino_t ino, size_t size, off_t of
 // write callback
 static void hfs_fuse_write_cb (fuse_req_t req, gboolean success, size_t count)
 {
-    LOG_debug (FUSE_LOG, "write_cb  success: %s", success?"YES":"NO");
+    // LOG_debug (FUSE_LOG, "write_cb  success: %s", success?"YES":"NO");
 
     if (!success) {
 		fuse_reply_err (req, ENOENT);
@@ -489,7 +489,7 @@ static void hfs_fuse_write (fuse_req_t req, fuse_ino_t ino, const char *buf, siz
 {
     HfsFuse *hfs_fuse = fuse_req_userdata (req);
     
-    LOG_debug (FUSE_LOG, "write  inode: %"INO_FMT", size: %zd, off: %"OFF_FMT, ino, size, off);
+    // LOG_debug (FUSE_LOG, "write  inode: %"INO_FMT", size: %zd, off: %"OFF_FMT, ino, size, off);
 
     dir_tree_file_write (hfs_fuse->dir_tree, ino, buf, size, off, hfs_fuse_write_cb, req, fi);
 }

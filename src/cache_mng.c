@@ -208,7 +208,7 @@ void cache_mng_store_file_data (CacheMng *cmng, fuse_ino_t ino, size_t size, off
     // add to range
     hfs_range_add (en->range, off, off + size);
 
-    LOG_debug (CMNG_LOG, "Stored [%zu %zu] bytes for ino: %"INO_FMT, off, off + size, ino);
+    // LOG_debug (CMNG_LOG, "Stored [%zu %zu] bytes for ino: %"INO_FMT, off, off + size, ino);
 }
 
 
