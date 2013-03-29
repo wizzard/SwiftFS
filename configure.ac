@@ -1,4 +1,4 @@
-AC_INIT([hydrafs], [0.3], [paul.ionkin@gmail.com])
+AC_INIT([hydrafs], [0.4], [paul.ionkin@gmail.com])
 AC_CONFIG_MACRO_DIR([m4])
 AC_CANONICAL_TARGET
 AM_INIT_AUTOMAKE 
