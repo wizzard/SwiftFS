@@ -15,6 +15,7 @@ typedef struct {
 } HttpConnectionHeader;
 
 #define CON_LOG "con"
+#define IDLE "idle"
 
 static void http_connection_on_close (struct evhttp_connection *evcon, void *ctx);
 
@@ -40,6 +41,7 @@ gpointer http_connection_create (Application *app)
     con->evcon = NULL;
     con->auth_token = NULL;
     con->l_output_headers = NULL;
+    con->s_status = g_strdup (IDLE);
 
     con->is_acquired = FALSE;
 
@@ -53,6 +55,9 @@ void http_connection_destroy (gpointer data)
 
     if (con->auth_token)
         g_free (con->auth_token);
+
+    if (con->s_status)
+        g_free (con->s_status);
 
     if (con->evcon)    
         evhttp_connection_free (con->evcon);
@@ -147,7 +152,7 @@ void http_connection_get_info (gpointer client, GString *str)
 {
     HttpConnection *con = (HttpConnection *) client;
     
-    g_string_append_printf (str, "[%p] ", con);
+    g_string_append_printf (str, "[%p] %s", con, con->s_status);
 }
 
 gboolean http_connection_acquire (HttpConnection *con)
@@ -204,6 +209,12 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
     size_t buf_len;
     HfsStatsSrv *stats;
 
+    if (data->con->s_status)
+        g_free (data->con->s_status);
+    data->con->s_status = g_strdup (IDLE);
+
+    LOG_debug (CON_LOG, "[%p] Request cb !", data->con);
+    
     if (!req) {
         LOG_err (CON_LOG, "[%p] Request failed !", data->con);
         if (data->response_cb)
@@ -214,6 +225,8 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
     stats = application_get_stats_srv (data->con->app);
     if (stats) {
         hfs_stats_srv_set_storage_srv_status (stats, evhttp_request_get_response_code (req), req->response_code_line);
+
+        hfs_stats_srv_add_up_bytes (data->con->stats_srv, data->con->upload_bytes);
     }
 
     // XXX: handle redirect
@@ -247,7 +260,6 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
 done:
     g_free (data);
 }
-
 
 // add an header to the outgoing request
 void http_connection_add_output_header (HttpConnection *con, const gchar *key, const gchar *value)
@@ -357,7 +369,10 @@ gboolean http_connection_make_request_ (HttpConnection *con,
         evbuffer_add_buffer (req->output_buffer, out_buffer);
 
         // update stats
-        hfs_stats_srv_add_up_bytes (con->stats_srv, evbuffer_get_length (req->output_buffer));
+        con->upload_bytes = evbuffer_get_length (req->output_buffer);
+
+    } else {
+        con->upload_bytes = 0;
     }
 
     LOG_msg (CON_LOG, "[%p] New request: %s %s buf: %zu", con, http_cmd, url, evbuffer_get_length (req->output_buffer));
@@ -432,6 +447,10 @@ gboolean http_connection_make_request_to_storage_url (HttpConnection *con,
     req->out_buffer = out_buffer;
     req->response_cb = response_cb;
     req->ctx = ctx;
+
+    if (con->s_status)
+        g_free (con->s_status);
+    con->s_status = g_strdup_printf ("%s %s", http_cmd, resource_path);
 
     auth_client_get_data (application_get_auth_client (con->app), FALSE, http_connection_on_auth_data_cb, req);
     return TRUE;

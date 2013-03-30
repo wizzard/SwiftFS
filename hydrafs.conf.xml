@@ -5,7 +5,7 @@
 
 <pool>
     <!-- number of concurrent connections for each type of operation -->
-    <writers type="int">2</writers>
+    <writers type="int">5</writers>
     <readers type="int">2</readers>
     <!-- number of concurrent connections other operations, 
     such as directory listing, object deleting, etc -->
@@ -61,11 +61,11 @@
     <cache_object_ttl type="uint">600</cache_object_ttl>
     <!-- how often check cached objects for expiration, 1 min -->
     <cache_check_secs type="uint">60</cache_check_secs>
-    <!-- segment size for upload / download files (5mb) -->
-    <segment_size type="uint">1024</segment_size>
     <!-- segment size for upload / download files (5mb) 
-    <segment_size type="uint">5242880</segment_size>
-    -->
+    <segment_size type="uint">1024</segment_size> -->
+    <!-- segment size for upload / download files (5mb)
+    <segment_size type="uint">5242880</segment_size> -->
+    <segment_size type="uint">52428800</segment_size>
 </filesystem>
 
 <statistics>

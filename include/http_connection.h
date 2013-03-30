@@ -32,6 +32,9 @@ struct _HttpConnection {
 
     // upload / download speed
     HfsStatsSrv *stats_srv;
+
+    gchar *s_status;
+    guint64 upload_bytes;
 };
 
 

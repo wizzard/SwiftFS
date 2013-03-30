@@ -15,6 +15,8 @@ struct _HfsFileOp {
     gchar *fname; //original file name with path
     size_t segment_size;
     gboolean write_called; // set TRUE if write operations were called (need to upload manifest)
+    GList *l_write_data;
+    gboolean release_received;
 
     gboolean released; // a simple version of ref counter.
     size_t current_size; // total bytes after read / write calls (encrypted)
@@ -53,15 +55,18 @@ HfsFileOp *hfs_fileop_create (Application *app, const gchar *fname)
     fop->write_called = FALSE;
     fop->full_file = FALSE;
     fop->full_object_size = 0;
+    fop->l_write_data = NULL;
 
     return fop;
 }
 
 void hfs_fileop_destroy (HfsFileOp *fop)
 {
+    LOG_debug (FOP_LOG, "FileOP destroy !");
     evbuffer_free (fop->segment_buf);
     g_free (fop->fname);
     g_free (fop);
+    fop = NULL;
 }
 /*}}}*/
 
@@ -84,8 +89,8 @@ static void hfs_fileop_release_on_sent_cb (HttpConnection *con, void *ctx,
     
     // if manifest is handled - we are done
     if (fop->manifest_handled) {
-        hfs_fileop_destroy (fop);
-    
+        if (g_list_length (fop->l_write_data) == 0)
+            hfs_fileop_destroy (fop);
     // last segment is sent, but we need to send manifest - repeat
     } else {
         hfs_fileop_release (fop);
@@ -222,7 +227,8 @@ void hfs_fileop_release (HfsFileOp *fop)
             return;
         }
     } else {
-        hfs_fileop_destroy (fop);
+        if (g_list_length (fop->l_write_data) == 0)
+            hfs_fileop_destroy (fop);
     }
 }
 /*}}}*/
@@ -236,6 +242,25 @@ typedef struct {
     gpointer ctx;
 } FileOpWriteData;
 
+static void write_data_destroy (FileOpWriteData *write_data)
+{
+    GList *l;
+
+    for (l = g_list_first (write_data->fop->l_write_data); l; l = g_list_next (l)) {
+        FileOpWriteData *tmp = (FileOpWriteData *) l->data;
+
+        if (tmp == write_data) {
+            write_data->fop->l_write_data = g_list_delete_link (write_data->fop->l_write_data, l);
+            break;
+        }
+    }
+
+    if (g_list_first (write_data->fop->l_write_data) == 0 && write_data->fop->released)
+        hfs_fileop_destroy (write_data->fop);
+
+    g_free (write_data);
+}
+
 static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx);
 
 // segment buffer is sent, check if there is more data left in segment buffer
@@ -246,15 +271,13 @@ static void hfs_fileop_write_on_sent_cb (HttpConnection *con, void *ctx,
     FileOpWriteData *write_data = (FileOpWriteData *) ctx;
     HfsFileOp *fop = NULL;
     
-    LOG_err (FOP_LOG, "Segment uploaded !");
+    LOG_debug (FOP_LOG, "[%p] Segment uploaded !", con);
     // release HttpConnection
     http_connection_release (con);
 
     if (!success) {
         LOG_err (FOP_LOG, "Failed to upload segment !");
-
-        write_data->on_buffer_written_cb (write_data->fop, write_data->ctx, FALSE, 0);
-        g_free (write_data);
+        write_data_destroy (write_data);
         return;
     }
 
@@ -266,16 +289,14 @@ static void hfs_fileop_write_on_sent_cb (HttpConnection *con, void *ctx,
         // get HTTP connection to upload segment (for small file) or manifest (for large file)
         if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_write_on_con_cb, write_data)) {
             LOG_err (FOP_LOG, "Failed to get HTTP client !");
-            write_data->on_buffer_written_cb (write_data->fop, write_data->ctx, FALSE, 0);
-            g_free (write_data);
+            write_data_destroy (write_data);
             return;
         }
     
     // ok, we are done
     } else {
         // data is added to the current segment buffer
-        write_data->on_buffer_written_cb (write_data->fop, write_data->ctx, TRUE, write_data->buf_size);
-        g_free (write_data);
+        write_data_destroy (write_data);
     }
 }
 
@@ -353,12 +374,12 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
         LOG_err (FOP_LOG, "Failed to create HTTP request !");
         http_connection_release (con);
         write_data->on_buffer_written_cb (fop, write_data->ctx, FALSE, 0);
-        g_free (write_data);
+        write_data_destroy (write_data);
         return;
     }
 
     // XXX 
-    // write_data->on_buffer_written_cb (write_data->fop, write_data->ctx, TRUE, write_data->buf_size);
+    write_data->on_buffer_written_cb (write_data->fop, write_data->ctx, TRUE, write_data->buf_size);
 }
 
 // Add data to segment buffer
@@ -371,11 +392,13 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
 
     // XXX: allow only sequentially write
     // current written bytes should be always match offset
+    /*
     if (fop->current_size != off) {
         LOG_err (FOP_LOG, "Write call with offset %"OFF_FMT" is not allowed !", off);
         on_buffer_written_cb (fop, ctx, FALSE, 0);
         return;
     }
+    */
 
     // CacheMng
     cache_mng_store_file_data (application_get_cache_mng (fop->app), 
@@ -397,10 +420,13 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
         write_data->ctx = ctx;
         write_data->buf_size = buf_size;
 
+        fop->l_write_data = g_list_append (fop->l_write_data, write_data);
+
         // get HTTP connection to upload segment (for small file) or manifest (for large file)
         if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_write_on_con_cb, write_data)) {
             LOG_err (FOP_LOG, "Failed to get HTTP client !");
             on_buffer_written_cb (fop, ctx, FALSE, 0);
+            write_data_destroy (write_data);
             return;
         }
 

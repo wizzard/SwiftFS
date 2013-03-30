@@ -469,7 +469,6 @@ int main (int argc, char *argv[])
     app->evbase = event_base_new ();
     app->full_container_name = NULL;
 
-
     if (!app->evbase) {
         LOG_err (APP_LOG, "Failed to create event base !");
         return -1;
@@ -480,6 +479,7 @@ int main (int argc, char *argv[])
         LOG_err (APP_LOG, "Failed to create DNS base !");
         return -1;
     }
+    evdns_base_load_hosts (app->dns_base, "/etc/hosts");
 
 /*{{{ cmd line args */
 
