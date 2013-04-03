@@ -12,6 +12,9 @@ struct _HfsFileOp {
     Application *app;
     ConfData *conf;
 
+    struct timeval start_tv;
+    guint64 total_bytes;
+
     gchar *fname; //original file name with path
     size_t segment_size;
     gboolean write_called; // set TRUE if write operations were called (need to upload manifest)
@@ -56,13 +59,24 @@ HfsFileOp *hfs_fileop_create (Application *app, const gchar *fname)
     fop->full_file = FALSE;
     fop->full_object_size = 0;
     fop->l_write_data = NULL;
+    gettimeofday (&fop->start_tv, NULL);
+    fop->total_bytes = 0;
 
     return fop;
 }
 
 void hfs_fileop_destroy (HfsFileOp *fop)
 {
+    struct timeval end_tv;
+    
     LOG_debug (FOP_LOG, "FileOP destroy !");
+
+    hfs_stats_srv_add_history (application_get_stats_srv (fop->app), 
+        fop->fname, fop->write_called ? "Upload" : "Download", fop->total_bytes,
+        &fop->start_tv, &end_tv);
+
+    gettimeofday (&end_tv, NULL);
+
     evbuffer_free (fop->segment_buf);
     g_free (fop->fname);
     g_free (fop);
@@ -399,6 +413,8 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
         return;
     }
     */
+
+    fop->total_bytes = fop->total_bytes + buf_size;
 
     // CacheMng
     cache_mng_store_file_data (application_get_cache_mng (fop->app), 
@@ -842,6 +858,8 @@ void hfs_fileop_read_buffer (HfsFileOp *fop,
     HfsFileOp_on_buffer_read_cb on_buffer_read_cb, gpointer ctx)
 {
     FileOpReadData *read_data;
+    
+    fop->total_bytes = fop->total_bytes + size;
     
     read_data = g_new0 (FileOpReadData, 1);
     // various data

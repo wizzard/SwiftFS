@@ -73,4 +73,6 @@
     <enabled type="boolean">True</enabled>
     <!-- HTTP port -->
     <port type="int">8011</port>
+    <!-- Maximum items to keep in history -->
+    <history_max_items type="uint">2000</history_max_items>
 </statistics>

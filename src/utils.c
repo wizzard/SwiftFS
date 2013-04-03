@@ -187,3 +187,42 @@ HostnameValidationResult validate_hostname (const char *hostname, const X509 *se
 
 	return result;
 }
+
+const gchar *timeval_to_str (struct timeval *tv)
+{
+    time_t nowtime;
+    struct tm *nowtm;
+    char tmbuf[64], buf[64];
+
+    nowtime = tv->tv_sec;
+    nowtm = localtime (&nowtime);
+    strftime (tmbuf, sizeof tmbuf, "%H:%M:%S", nowtm);
+    snprintf (buf, sizeof buf, "%s.%06d", tmbuf, tv->tv_usec);
+    
+    return buf;
+}
+
+guint64 timeval_diff (struct timeval *starttime, struct timeval *finishtime)
+{
+    guint64 msec = 0;
+    
+    // special case, when finishtime is not set
+    if (!finishtime->tv_sec && !finishtime->tv_usec)
+        return 0;
+
+    if (finishtime->tv_sec > starttime->tv_sec) {
+        msec = (guint64)((finishtime->tv_sec - starttime->tv_sec) * 1000);
+        msec += (guint64)((finishtime->tv_usec - starttime->tv_usec) / 1000);
+    } else if (finishtime->tv_usec > starttime->tv_usec) {
+        msec = (guint64)((finishtime->tv_usec - starttime->tv_usec) / 1000);
+    }
+    
+    return msec;
+}
+
+const gchar *secs_to_str (guint64 secs)
+{
+    char buf[64];
+
+    g_snprintf (buf, sizeof (buf), "
+}

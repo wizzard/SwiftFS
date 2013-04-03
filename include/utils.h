@@ -27,4 +27,8 @@ typedef enum {
 } HostnameValidationResult;
 HostnameValidationResult validate_hostname (const char *hostname, const X509 *server_cert);
 
+const gchar *timeval_to_str (struct timeval *tv);
+const gchar *secs_to_str (guint64 secs);
+guint64 timeval_diff (struct timeval *starttime, struct timeval *finishtime);
+
 #endif

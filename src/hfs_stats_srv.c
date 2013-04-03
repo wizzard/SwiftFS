@@ -27,9 +27,20 @@ struct _HfsStatsSrv {
     gint storage_server_status;
     gchar *storage_server_status_line;
     guint64 storage_server_requests;
+
+    GQueue *q_history; // queue of HistoryItem
 };
 
+typedef struct {
+    gchar *url;
+    gchar *http_method;
+    guint64 bytes;
+    struct timeval start_tv;
+    struct timeval end_tv;
+} HistoryItem;
+
 static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg);
+static void history_item_destroy (HistoryItem *item);
 
 HfsStatsSrv *hfs_stats_srv_create (Application *app)
 {
@@ -45,6 +56,7 @@ HfsStatsSrv *hfs_stats_srv_create (Application *app)
     srv->storage_server_status_line = NULL;
     srv->auth_server_requests = 0;
     srv->storage_server_requests = 0;
+    srv->q_history = g_queue_new ();
 
     if (conf_get_boolean (srv->conf, "statistics.enabled")) {
         gint port;
@@ -71,6 +83,9 @@ void hfs_stats_srv_destroy (HfsStatsSrv *srv)
 {
     g_free (srv->auth_server_status_line);
     g_free (srv->storage_server_status_line);
+
+    g_queue_free_full (srv->q_history, (GDestroyNotify ) history_item_destroy);
+
     g_free (srv);
 }
 
@@ -216,6 +231,25 @@ static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg)
         g_string_free (str, TRUE);
     }
 
+    {
+        size_t i;
+
+        evbuffer_add_printf (evb, "<BR>History:<BR>");
+
+        for (i = 0; i < g_queue_get_length (srv->q_history); i++) {
+            gchar *tstr;
+            guint64 secs = 0;
+
+            HistoryItem *item = (HistoryItem *) g_queue_peek_nth (srv->q_history, i);
+
+            if (item->end_tv.tv_sec > item->start_tv.tv_sec) {
+                secs = item->end_tv.tv_sec - item->start_tv.tv_sec;
+            }
+
+            evbuffer_add_printf (evb, "%s %s %"G_GUINT64_FORMAT" %s", item->url, item->http_method, item->bytes, tstr);
+        }
+    }
+
     evhttp_send_reply (req, 200, "OK", evb);
     evbuffer_free (evb);
 }
@@ -238,4 +272,38 @@ void hfs_stats_srv_set_storage_srv_status (HfsStatsSrv *srv, gint code, const gc
         g_free (srv->storage_server_status_line);
         srv->storage_server_status_line = g_strdup (status_line);
     }
+}
+
+static void history_item_destroy (HistoryItem *item)
+{
+    g_free (item->url);
+    g_free (item->http_method);
+    g_free (item);
+}
+
+void hfs_stats_srv_add_history (HfsStatsSrv *srv, const gchar *url, const gchar *http_method, 
+    guint64 bytes, struct timeval *start_tv, struct timeval *end_tv)
+{
+    HistoryItem *item;
+
+    if (!conf_get_boolean (srv->conf, "statistics.enabled")) 
+        return;
+    
+    item = g_new0 (HistoryItem, 1);
+    item->url = g_strdup (url);
+    item->http_method = g_strdup (http_method);
+    item->bytes = bytes;
+    item->start_tv.tv_sec = start_tv->tv_sec;
+    item->start_tv.tv_usec = start_tv->tv_usec;
+    item->end_tv.tv_sec = end_tv->tv_sec;
+    item->end_tv.tv_usec = end_tv->tv_usec;
+
+    while (g_queue_get_length (srv->q_history) > conf_get_uint (srv->conf, "statistics.history_max_items")) {
+        HistoryItem *tmp = g_queue_pop_tail (srv->q_history);
+        if (tmp) {
+            history_item_destroy (tmp);
+        }
+    }
+
+    g_queue_push_head (srv->q_history, item);
 }
