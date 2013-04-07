@@ -7,6 +7,7 @@
 
 #include "global.h"
 
+
 HfsStatsSrv *hfs_stats_srv_create (Application *app);
 void hfs_stats_srv_destroy (HfsStatsSrv *srv);
 
@@ -21,5 +22,7 @@ void hfs_stats_srv_set_storage_srv_status (HfsStatsSrv *srv, gint code, const gc
 
 void hfs_stats_srv_add_history (HfsStatsSrv *srv, const gchar *url, const gchar *http_method, 
     guint64 bytes, struct timeval *start_tv, struct timeval *end_tv);
+
+
 
 #endif

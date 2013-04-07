@@ -220,9 +220,47 @@ guint64 timeval_diff (struct timeval *starttime, struct timeval *finishtime)
     return msec;
 }
 
-const gchar *secs_to_str (guint64 secs)
+#define GB (1024 * 1024 * 1024)
+#define MB (1024 * 1024)
+#define KB (1024)
+const gchar *speed_bytes_get_string (guint64 bps)
 {
-    char buf[64];
+    static gchar out[30];
+    gdouble tmp;
+    
+    if (bps >= MB) {
+        tmp = (gdouble)bps / (gdouble)MB;
+        g_snprintf (out, sizeof (out), "%.2fMb/s", tmp);
+    } else if (bps >= KB) {
+        tmp = (gdouble)bps / (gdouble)KB;
+        g_snprintf (out, sizeof (out), "%.2fKb/s", tmp);
+    } else {
+        tmp = (gdouble)bps;
+        g_snprintf (out, sizeof (out), "%.2fb/s", tmp);
+    }
 
-    g_snprintf (buf, sizeof (buf), "
+    return out;
 }
+
+const gchar *bytes_get_string (guint64 bytes)
+{
+    static gchar out[30];
+    gdouble tmp;
+    
+    if (bytes >= GB) {
+        tmp = (gdouble)bytes / (gdouble)GB;
+        g_snprintf (out, sizeof (out), "%.2fGb", tmp);
+    } else if (bytes >= MB) {
+        tmp = (gdouble)bytes / (gdouble)MB;
+        g_snprintf (out, sizeof (out), "%.2fMb", tmp);
+    } else if (bytes >= KB) {
+        tmp = (gdouble)bytes / (gdouble)KB;
+        g_snprintf (out, sizeof (out), "%.2fKb", tmp);
+    } else {
+        tmp = (gdouble)bytes;
+        g_snprintf (out, sizeof (out), "%.2fb", tmp);
+    }
+
+    return out;
+}
+

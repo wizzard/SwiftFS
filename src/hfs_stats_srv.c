@@ -122,25 +122,13 @@ static guint32 hfs_stats_srv_get_speed (SpeedEntry *a_speed)
         return 0;
 }
 
-#define MB (1024 * 1024)
-#define KB (1024)
 static const gchar *hfs_stats_srv_get_speed_str (SpeedEntry *a_speed)
 {
     guint32 bps;
-    static gchar out[20];
-    gdouble tmp;
 
     bps = hfs_stats_srv_get_speed (a_speed);
 
-    if (bps >= MB) {
-        tmp = (gdouble)bps / (gdouble)MB;
-        g_snprintf (out, sizeof (out), "%.2fMb/s", tmp);
-    } else {
-        tmp = (gdouble)bps / (gdouble)KB;
-        g_snprintf (out, sizeof (out), "%.2fKb/s", tmp);
-    }
-
-    return out;
+    return speed_bytes_get_string (bps);
 }
 
 void hfs_stats_srv_add_down_bytes (HfsStatsSrv *srv, guint32 bytes)
@@ -214,40 +202,100 @@ static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg)
 
     {
         GString *str;
+        GList *l_tasks = NULL, *l;
 
-        str = client_pool_get_task_list (application_get_write_client_pool (srv->app));
-        evbuffer_add_printf (evb, "<BR>Write clients: %s<BR>",
-            str->str);
-        g_string_free (str, TRUE);
+        l_tasks = client_pool_get_task_list (application_get_write_client_pool (srv->app), l_tasks, "Upload");
+        l_tasks = client_pool_get_task_list (application_get_read_client_pool (srv->app), l_tasks, "Download");
+        l_tasks = client_pool_get_task_list (application_get_ops_client_pool (srv->app), l_tasks, "Operation");
+        
+        evbuffer_add_printf (evb, "<BR><b>Current Tasks:<b><BR>");
+        evbuffer_add_printf (evb, "<table border='1'>\
+            <tr>\
+            <th>Task Name</th>\
+            <th>ID</th>\
+            <th>Status</th>\
+            </tr>\
+        ");
 
-        str = client_pool_get_task_list (application_get_read_client_pool (srv->app));
-        evbuffer_add_printf (evb, "Read clients: %s<BR>",
-            str->str);
-        g_string_free (str, TRUE);
+        for (l = g_list_first (l_tasks); l; l = g_list_next (l)) {
+            ClientInfo *info = (ClientInfo *) l->data;
 
-        str = client_pool_get_task_list (application_get_ops_client_pool (srv->app));
-        evbuffer_add_printf (evb, "Operations clients: %s<BR>",
-            str->str);
-        g_string_free (str, TRUE);
+            evbuffer_add_printf (evb, "<tr>");
+            evbuffer_add_printf (evb, "\
+                <td>%s</td>\
+                <td>%p</td>\
+                <td>%s</td>\
+                ",
+                info->pool_name,
+                info->con,
+                info->status
+            );
+            evbuffer_add_printf (evb, "</tr>");
+        }
+        evbuffer_add_printf (evb, "</table>");
+
     }
 
     {
         size_t i;
 
-        evbuffer_add_printf (evb, "<BR>History:<BR>");
+        evbuffer_add_printf (evb, "<BR><b>History:<b><BR>");
+        evbuffer_add_printf (evb, "<table border='1'>\
+            <tr>\
+            <th>File name</th>\
+            <th>Direction</th>\
+            <th>File size</th>\
+            <th>Seconds</th>\
+            <th>Speed</th>\
+            <th>Start time</th>\
+            <th>End time</th>\
+            </tr>\
+        ");
 
         for (i = 0; i < g_queue_get_length (srv->q_history); i++) {
-            gchar *tstr;
+            gchar tstr[20];
             guint64 secs = 0;
+            gchar *start_time, *end_time;
 
             HistoryItem *item = (HistoryItem *) g_queue_peek_nth (srv->q_history, i);
 
+            evbuffer_add_printf (evb, "<tr>");
+            
             if (item->end_tv.tv_sec > item->start_tv.tv_sec) {
                 secs = item->end_tv.tv_sec - item->start_tv.tv_sec;
+                g_snprintf (tstr, sizeof (tstr), "%"G_GUINT64_FORMAT, secs);
+            } else {
+                g_snprintf (tstr, sizeof (tstr), "%d", 0);
             }
 
-            evbuffer_add_printf (evb, "%s %s %"G_GUINT64_FORMAT" %s", item->url, item->http_method, item->bytes, tstr);
+            start_time = g_strdup (timeval_to_str (&item->start_tv));
+            end_time = g_strdup (timeval_to_str (&item->end_tv));
+
+            evbuffer_add_printf (evb, "\
+                <td>%s</td>\
+                <td>%s</td>\
+                <td>%s</td>\
+                <td>%s</td>\
+                <td>%s</td>\
+                <td>%s</td>\
+                <td>%s</td>\
+                ", 
+                item->url, 
+                item->http_method, 
+                item->bytes > 0 ? bytes_get_string (item->bytes) : "0b", 
+                tstr,
+                secs > 0 ? speed_bytes_get_string (item->bytes / secs) : speed_bytes_get_string (item->bytes),
+                start_time,
+                end_time
+            );
+
+            g_free (start_time);
+            g_free (end_time);
+
+            evbuffer_add_printf (evb, "</tr>");
         }
+
+        evbuffer_add_printf (evb, "</table>");
     }
 
     evhttp_send_reply (req, 200, "OK", evb);
@@ -297,6 +345,8 @@ void hfs_stats_srv_add_history (HfsStatsSrv *srv, const gchar *url, const gchar 
     item->start_tv.tv_usec = start_tv->tv_usec;
     item->end_tv.tv_sec = end_tv->tv_sec;
     item->end_tv.tv_usec = end_tv->tv_usec;
+
+    LOG_debug (STATS_LOG, "Start %u End: %u  Now: %u", item->start_tv.tv_sec, item->end_tv.tv_sec, time (NULL));
 
     while (g_queue_get_length (srv->q_history) > conf_get_uint (srv->conf, "statistics.history_max_items")) {
         HistoryItem *tmp = g_queue_pop_tail (srv->q_history);

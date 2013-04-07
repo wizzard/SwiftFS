@@ -148,11 +148,15 @@ gboolean http_connection_check_rediness (gpointer client)
     return !con->is_acquired;
 }
 
-void http_connection_get_info (gpointer client, GString *str)
+ClientInfo *http_connection_get_info (gpointer client)
 {
     HttpConnection *con = (HttpConnection *) client;
+    ClientInfo *info = g_new0 (ClientInfo, 1);
     
-    g_string_append_printf (str, "[%p] %s", con, con->s_status);
+    info->con = con;
+    info->status = g_strdup (con->s_status);
+    
+    return info;
 }
 
 gboolean http_connection_acquire (HttpConnection *con)

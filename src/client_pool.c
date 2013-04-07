@@ -148,17 +148,18 @@ void client_pool_add_request (ClientPool *pool,
 
 }
 
-GString *client_pool_get_task_list (ClientPool *pool)
+
+GList *client_pool_get_task_list (ClientPool *pool, GList *l_tasks, const gchar *pool_name)
 {
     GList *l;
     GString *str;
     
-    str = g_string_new (NULL);
-
     for (l = g_list_first (pool->l_clients); l; l = g_list_next (l)) {
         PoolClient *pc = (PoolClient *) l->data;
-        pc->client_get_info (pc->client, str);
+        ClientInfo *client_info = pc->client_get_info (pc->client);
+        client_info->pool_name = g_strdup (pool_name);
+        l_tasks = g_list_append (l_tasks, client_info);
     }
 
-    return str;
+    return l_tasks;
 }

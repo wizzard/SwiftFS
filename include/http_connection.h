@@ -43,7 +43,7 @@ void http_connection_destroy (gpointer data);
 
 void http_connection_set_on_released_cb (gpointer client, ClientPool_on_released_cb client_on_released_cb, gpointer ctx);
 gboolean http_connection_check_rediness (gpointer client);
-void http_connection_get_info (gpointer client, GString *str);
+ClientInfo *http_connection_get_info (gpointer client);
 gboolean http_connection_acquire (HttpConnection *con);
 gboolean http_connection_release (HttpConnection *con);
 

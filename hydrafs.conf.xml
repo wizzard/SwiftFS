@@ -16,9 +16,9 @@
 
 <connection>
     <!-- timeout value for HTTP requests (seconds) -->
-    <timeout type="int">-1</timeout>
+    <timeout type="int">600</timeout>
     <!-- number of retries, before giving up (-1 for infinite loop) -->
-    <retries type="int">-1</retries>
+    <retries type="int">600</retries>
     <!--set True to enable server certificate and hostname validation -->
     <ssl_enable_validation type="boolean">True</ssl_enable_validation>
     <!--the list of available 'High' cipher suites minus Anonymous DH and Camellia -->

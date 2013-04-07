@@ -31,4 +31,6 @@ const gchar *timeval_to_str (struct timeval *tv);
 const gchar *secs_to_str (guint64 secs);
 guint64 timeval_diff (struct timeval *starttime, struct timeval *finishtime);
 
+const gchar *speed_bytes_get_string (guint64 bps);
+const gchar *bytes_get_string (guint64 bytes);
 #endif

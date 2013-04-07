@@ -71,11 +71,10 @@ void hfs_fileop_destroy (HfsFileOp *fop)
     
     LOG_debug (FOP_LOG, "FileOP destroy !");
 
+    gettimeofday (&end_tv, NULL);
     hfs_stats_srv_add_history (application_get_stats_srv (fop->app), 
         fop->fname, fop->write_called ? "Upload" : "Download", fop->total_bytes,
         &fop->start_tv, &end_tv);
-
-    gettimeofday (&end_tv, NULL);
 
     evbuffer_free (fop->segment_buf);
     g_free (fop->fname);
