@@ -155,6 +155,9 @@ ClientInfo *http_connection_get_info (gpointer client)
     
     info->con = con;
     info->status = g_strdup (con->s_status);
+    if (con->upload_bytes)
+        info->bytes = con->upload_bytes;
+    timeval_copy (&info->start_tv, &con->start_tv);
     
     return info;
 }
@@ -216,6 +219,7 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
     if (data->con->s_status)
         g_free (data->con->s_status);
     data->con->s_status = g_strdup (IDLE);
+    timeval_zero (&data->con->start_tv);
 
     LOG_debug (CON_LOG, "[%p] Request cb !", data->con);
     
@@ -232,6 +236,7 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
 
         hfs_stats_srv_add_up_bytes (data->con->stats_srv, data->con->upload_bytes);
     }
+    data->con->upload_bytes = 0;
 
     // XXX: handle redirect
     // 200 (Ok), 201 (Created), 202 (Accepted), 204 (No Content) are ok
@@ -368,7 +373,6 @@ gboolean http_connection_make_request_ (HttpConnection *con,
     http_connection_free_headers (con->l_output_headers);
     con->l_output_headers = NULL;
 
-
     if (out_buffer) {
         evbuffer_add_buffer (req->output_buffer, out_buffer);
 
@@ -378,6 +382,8 @@ gboolean http_connection_make_request_ (HttpConnection *con,
     } else {
         con->upload_bytes = 0;
     }
+
+    gettimeofday (&con->start_tv, NULL);
 
     LOG_msg (CON_LOG, "[%p] New request: %s %s buf: %zu", con, http_cmd, url, evbuffer_get_length (req->output_buffer));
     

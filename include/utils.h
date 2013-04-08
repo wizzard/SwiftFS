@@ -30,6 +30,8 @@ HostnameValidationResult validate_hostname (const char *hostname, const X509 *se
 const gchar *timeval_to_str (struct timeval *tv);
 const gchar *secs_to_str (guint64 secs);
 guint64 timeval_diff (struct timeval *starttime, struct timeval *finishtime);
+void timeval_copy (struct timeval *dst, struct timeval *src);
+void timeval_zero (struct timeval *tv);
 
 const gchar *speed_bytes_get_string (guint64 bps);
 const gchar *bytes_get_string (guint64 bytes);

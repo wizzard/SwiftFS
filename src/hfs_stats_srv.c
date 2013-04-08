@@ -214,23 +214,32 @@ static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg)
             <th>Task Name</th>\
             <th>ID</th>\
             <th>Status</th>\
+            <th>Sent / Received bytes</th>\
+            <th>Start time</th>\
             </tr>\
         ");
 
         for (l = g_list_first (l_tasks); l; l = g_list_next (l)) {
             ClientInfo *info = (ClientInfo *) l->data;
 
+            gchar *start_time = g_strdup (timeval_to_str (&info->start_tv));
+            
             evbuffer_add_printf (evb, "<tr>");
             evbuffer_add_printf (evb, "\
                 <td>%s</td>\
                 <td>%p</td>\
                 <td>%s</td>\
+                <td>%s</td>\
+                <td>%s</td>\
                 ",
                 info->pool_name,
                 info->con,
-                info->status
+                info->status,
+                bytes_get_string (info->bytes),
+                start_time
             );
             evbuffer_add_printf (evb, "</tr>");
+            g_free (start_time);
         }
         evbuffer_add_printf (evb, "</table>");
 
@@ -282,7 +291,7 @@ static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg)
                 ", 
                 item->url, 
                 item->http_method, 
-                item->bytes > 0 ? bytes_get_string (item->bytes) : "0b", 
+                bytes_get_string (item->bytes),
                 tstr,
                 secs > 0 ? speed_bytes_get_string (item->bytes / secs) : speed_bytes_get_string (item->bytes),
                 start_time,
@@ -299,6 +308,7 @@ static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg)
     }
 
     evhttp_send_reply (req, 200, "OK", evb);
+
     evbuffer_free (evb);
 }
 

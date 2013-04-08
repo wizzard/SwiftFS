@@ -220,6 +220,18 @@ guint64 timeval_diff (struct timeval *starttime, struct timeval *finishtime)
     return msec;
 }
 
+void timeval_copy (struct timeval *dst, struct timeval *src)
+{
+    dst->tv_sec = src->tv_sec;
+    dst->tv_usec = src->tv_usec;
+}
+
+void timeval_zero (struct timeval *tv)
+{
+    tv->tv_sec = 0;
+    tv->tv_usec = 0;
+}
+
 #define GB (1024 * 1024 * 1024)
 #define MB (1024 * 1024)
 #define KB (1024)

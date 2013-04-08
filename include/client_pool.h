@@ -17,6 +17,8 @@ typedef struct {
     gchar *pool_name;
     gpointer con;
     gchar *status;
+    guint64 bytes;
+    struct timeval start_tv;
 } ClientInfo;
 typedef ClientInfo *(*ClientPool_client_get_info) (gpointer client);
 

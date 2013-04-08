@@ -35,6 +35,7 @@ struct _HttpConnection {
 
     gchar *s_status;
     guint64 upload_bytes;
+    struct timeval start_tv;
 };
 
 
