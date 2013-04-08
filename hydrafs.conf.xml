@@ -63,9 +63,8 @@
     <cache_check_secs type="uint">60</cache_check_secs>
     <!-- segment size for upload / download files (5mb) 
     <segment_size type="uint">1024</segment_size> -->
-    <!-- segment size for upload / download files (5mb)
-    <segment_size type="uint">5242880</segment_size> -->
-    <segment_size type="uint">52428800</segment_size>
+    <!-- segment size for upload / download files (10mb) -->
+    <segment_size type="uint">10485760</segment_size>
 </filesystem>
 
 <statistics>
