@@ -48,6 +48,7 @@ Where options could be:
 -v: Verbose output
 -f: Do not daemonize process
 -c path:  Path to configuration file
+-o [opts]: FUSE options, see FUSE manpage
 
 Configuration file
 ------------------

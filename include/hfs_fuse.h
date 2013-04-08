@@ -12,7 +12,7 @@ struct dirbuf {
 	size_t size;
 };
 
-HfsFuse *hfs_fuse_new (Application *app, const gchar *mountpoint);
+HfsFuse *hfs_fuse_new (Application *app, const gchar *mountpoint, const gchar *fuse_opts);
 void hfs_fuse_destroy (HfsFuse *hfs_fuse);
 
 void hfs_fuse_add_dirbuf (fuse_req_t req, struct dirbuf *b, const char *name, fuse_ino_t ino, off_t file_size);

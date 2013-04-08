@@ -66,19 +66,39 @@ static struct fuse_lowlevel_ops hfs_fuse_opers = {
 
 // create HfsFuse object
 // create fuse handle and add it to libevent polling
-HfsFuse *hfs_fuse_new (Application *app, const gchar *mountpoint)
+HfsFuse *hfs_fuse_new (Application *app, const gchar *mountpoint, const gchar *fuse_opts)
 {
     HfsFuse *hfs_fuse;
     struct timeval tv;
+    struct fuse_args args = FUSE_ARGS_INIT (0, NULL);
 
     hfs_fuse = g_new0 (HfsFuse, 1);
     hfs_fuse->app = app;
     hfs_fuse->dir_tree = application_get_dir_tree (app);
     hfs_fuse->mountpoint = g_strdup (mountpoint);
+
+    if (fuse_opts) {
+        if (fuse_opt_add_arg (&args, "hydrafs") == -1) {
+            LOG_err (FUSE_LOG, "Failed to parse FUSE parameter !");
+            return NULL;
+        }
+
+        if (fuse_opt_add_arg (&args, "-o") == -1) {
+            LOG_err (FUSE_LOG, "Failed to parse FUSE parameter !");
+            return NULL;
+        }
+
+        if (fuse_opt_add_arg (&args, fuse_opts) == -1) {
+            LOG_err (FUSE_LOG, "Failed to parse FUSE parameter !");
+            return NULL;
+        }
+    }
     
-    if ((hfs_fuse->chan = fuse_mount (hfs_fuse->mountpoint, NULL)) == NULL) {
+    if ((hfs_fuse->chan = fuse_mount (hfs_fuse->mountpoint, &args)) == NULL) {
+        LOG_err (FUSE_LOG, "Failed to mount FUSE partition !");
         return NULL;
     }
+    fuse_opt_free_args (&args);
 
     // the receive buffer stuff
     hfs_fuse->recv_size = fuse_chan_bufsize (hfs_fuse->chan);

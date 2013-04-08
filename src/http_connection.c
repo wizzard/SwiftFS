@@ -42,6 +42,7 @@ gpointer http_connection_create (Application *app)
     con->auth_token = NULL;
     con->l_output_headers = NULL;
     con->s_status = g_strdup (IDLE);
+    timeval_zero (&con->start_tv);
 
     con->is_acquired = FALSE;
 

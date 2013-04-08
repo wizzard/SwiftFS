@@ -6,6 +6,7 @@
 #include "http_connection.h"
 #include "cache_mng.h"
 #include "hfs_encryption.h"
+#include "hfs_stats_srv.h"
 
 /*{{{ struct */
 struct _HfsFileOp {
@@ -102,6 +103,15 @@ static void hfs_fileop_release_on_sent_cb (HttpConnection *con, void *ctx,
     
     // if manifest is handled - we are done
     if (fop->manifest_handled) {
+            GList *l;
+
+        for (l = g_list_first (fop->l_write_data); l; l = g_list_next (l)) {
+            if (l->data == NULL) {
+                fop->l_write_data = g_list_delete_link (fop->l_write_data, l);
+                break;
+            }
+        }
+
         if (g_list_length (fop->l_write_data) == 0)
             hfs_fileop_destroy (fop);
     // last segment is sent, but we need to send manifest - repeat
@@ -207,18 +217,18 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
             hfs_fileop_release_on_sent_cb,
             fop
         );
+        if (!res) {
+            LOG_err (FOP_LOG, "Failed to create HTTP request !");
+            http_connection_release (con);
+            g_free (req_path);
+            return;
+        }
     }
 
     // drain buffer
     evbuffer_drain (fop->segment_buf, -1);
     
     g_free (req_path);
-
-    if (!res) {
-        LOG_err (FOP_LOG, "Failed to create HTTP request !");
-        http_connection_release (con);
-        return;
-    }
 
     // or we are done
     if (!send_request) {
@@ -234,6 +244,8 @@ void hfs_fileop_release (HfsFileOp *fop)
     fop->released = TRUE;
 
     if (fop->write_called) {
+        fop->l_write_data = g_list_append (fop->l_write_data, NULL);
+
         // get HTTP connection to upload segment (for small file) or manifest (for large file)
         if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_release_on_http_client_cb, fop)) {
             LOG_err (FOP_LOG, "Failed to get HTTP client !");
@@ -271,7 +283,8 @@ static void write_data_destroy (FileOpWriteData *write_data)
     if (g_list_first (write_data->fop->l_write_data) == 0 && write_data->fop->released)
         hfs_fileop_destroy (write_data->fop);
 
-    g_free (write_data);
+    if (write_data)
+        g_free (write_data);
 }
 
 static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx);

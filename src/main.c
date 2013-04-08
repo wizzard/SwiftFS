@@ -32,6 +32,8 @@ struct _Application {
     ClientPool *read_client_pool;
     ClientPool *ops_client_pool;
 
+    gchar *fuse_opts;
+
     gchar *auth_user;
     gchar *auth_pwd;
 
@@ -255,7 +257,7 @@ static gint application_finish_initialization_and_run (Application *app)
 /*}}}*/
 
 /*{{{ FUSE*/
-    app->hfs_fuse = hfs_fuse_new (app, app->mountpoint);
+    app->hfs_fuse = hfs_fuse_new (app, app->mountpoint, app->fuse_opts);
     if (!app->hfs_fuse) {
         LOG_err (APP_LOG, "Failed to create FUSE fs !");
         event_base_loopexit (app->evbase, NULL);
@@ -362,6 +364,8 @@ static void application_destroy (Application *app)
     g_free (app->container_name);
     g_free (app->full_container_name);
     evhttp_uri_free (app->auth_uri);
+    if (app->fuse_opts)
+        g_free (app->fuse_opts);
 
     conf_destroy (app->conf);
     g_free (app);
@@ -424,6 +428,7 @@ int main (int argc, char *argv[])
     gboolean disable_cache = FALSE;
     gboolean disable_crt_validation = FALSE;
     guint32 segment_size = 0;
+    gchar **s_fuse_opts = NULL;
 
     conf_path = g_build_filename (SYSCONFDIR, "hydrafs.conf", NULL); 
     g_snprintf (conf_str, sizeof (conf_str), "Path to configuration file. Default: %s", conf_path);
@@ -433,6 +438,7 @@ int main (int argc, char *argv[])
 	    { "config", 'c', 0, G_OPTION_ARG_FILENAME_ARRAY, &s_config, conf_str, NULL},
         { "foreground", 'f', 0, G_OPTION_ARG_NONE, &foreground, "Flag. Do not daemonize process.", NULL },
         { "storage-url", 's', 0, G_OPTION_ARG_STRING_ARRAY, &storage_url, "Set storage URL (Storage URL returned by Auth server will be ignored).", NULL },
+        { "fuse-options", 'o', 0, G_OPTION_ARG_STRING_ARRAY, &s_fuse_opts, "Fuse options.", "\"opt[,opt...]\"" },
         { "disable-cache", 0, 0, G_OPTION_ARG_NONE, &disable_cache, "Flag. Disable file caching.", NULL },
         { "cache-dir", 0, 0, G_OPTION_ARG_STRING_ARRAY, &cache_dir, "Set cache directory.", NULL },
         { "disable-stats", 0, 0, G_OPTION_ARG_NONE, &disable_stats, "Flag. Disable stats server.", NULL },
@@ -453,7 +459,7 @@ int main (int argc, char *argv[])
 
     SSL_load_error_strings ();
     SSL_library_init ();
-    if (! RAND_poll ()) {
+    if (!RAND_poll ()) {
         fprintf(stderr, "RAND_poll() failed.\n");
         return 1;
     }
@@ -651,6 +657,11 @@ int main (int argc, char *argv[])
     if (disable_crt_validation) {
         LOG_err (APP_LOG, "Disabling server certificate validation!");
         conf_add_boolean (app->conf, "connection.ssl_enable_validation", FALSE);
+    }
+
+    if (s_fuse_opts && g_strv_length (s_fuse_opts) > 0) {
+        app->fuse_opts = g_strdup (s_fuse_opts[0]);
+        g_strfreev (s_fuse_opts);
     }
 
 /*}}}*/
