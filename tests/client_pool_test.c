@@ -212,7 +212,7 @@ static void on_get_http_client (gpointer client, gpointer pool_ctx)
 
     http_client_set_output_length (http, 0);
 
-    http_client_start_request_to_storage_url (http, Method_get, fdata->in_name);
+    http_client_start_request_to_storage_url (http, Method_get, fdata->in_name, NULL, NULL);
 }
 /*{{{*/
 static void on_connection_data (HttpConnection *con, void *ctx, 
@@ -432,6 +432,27 @@ HfsStatsSrv *application_get_stats_srv (Application *app)
     return app->stats;
 }
 
+ClientPool *application_get_write_client_pool (Application *app)
+{
+    return NULL;
+}
+
+ClientPool *application_get_read_client_pool (Application *app)
+{
+    return NULL;
+}
+
+ClientPool *application_get_ops_client_pool (Application *app)
+{
+    return NULL;
+}
+
+SSL_CTX *application_get_ssl_ctx (Application *app)
+{
+    return NULL;
+}
+
+
 /*}}}*/
 
 int main (int argc, char *argv[])
@@ -507,14 +528,16 @@ int main (int argc, char *argv[])
             http_client_create,
             http_client_destroy,
             http_client_set_on_released_cb,
-            http_client_check_rediness
+            http_client_check_rediness,
+            http_client_get_info
         );
     } else {
         pool = client_pool_create (app, app->pool_count,
             http_connection_create,
             http_connection_destroy,
             http_connection_set_on_released_cb,
-            http_connection_check_rediness
+            http_connection_check_rediness,
+            http_client_get_info
         );
     }
 

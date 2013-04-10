@@ -198,7 +198,7 @@ const gchar *timeval_to_str (struct timeval *tv)
     nowtm = localtime (&nowtime);
     strftime (tmbuf, sizeof tmbuf, "%H:%M:%S", nowtm);
     snprintf (buf, sizeof buf, "%s.%06d", tmbuf, tv->tv_usec);
-    
+
     return buf;
 }
 

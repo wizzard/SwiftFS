@@ -98,7 +98,7 @@ static gboolean http_connection_connect (HttpConnection *con, const gchar *stora
 		    BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS
         );
 
-        LOG_err (CON_LOG, "Using SSL !");
+        // LOG_err (CON_LOG, "Using SSL !");
     } else {
 		bev = bufferevent_socket_new (
             application_get_evbase (con->app),
@@ -232,11 +232,13 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
     }
 
     stats = application_get_stats_srv (data->con->app);
+    /*
     if (stats) {
         hfs_stats_srv_set_storage_srv_status (stats, evhttp_request_get_response_code (req), req->response_code_line);
 
         hfs_stats_srv_add_up_bytes (data->con->stats_srv, data->con->upload_bytes);
     }
+    */
     data->con->upload_bytes = 0;
 
     // XXX: handle redirect

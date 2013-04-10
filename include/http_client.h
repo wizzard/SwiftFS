@@ -41,14 +41,17 @@ gboolean http_client_is_ready (HttpClient *http);
 gboolean http_client_start_request_ (HttpClient *http, HttpClientRequestMethod method, const gchar *url);
 
 // get AuthData first and call http_client_start_request ()
-gboolean http_client_start_request_to_storage_url (HttpClient *http, HttpClientRequestMethod method, const gchar *path);
+gboolean http_client_start_request_to_storage_url (HttpClient *http, HttpClientRequestMethod method, const gchar *path,
+    struct evbuffer *out_buffer,
+    gpointer ctx
+        );
 
 // set context data for all callback functions
 void http_client_set_cb_ctx (HttpClient *http, gpointer ctx);
 
 
 // a chunk of data is received
-typedef void (*HttpClient_on_chunk_cb) (HttpClient *http, struct evbuffer *input_buf, gpointer ctx);
+typedef void (*HttpClient_on_chunk_cb) (HttpClient *http, struct evbuffer *data_buf, gboolean success, gpointer ctx);
 void http_client_set_on_chunk_cb (HttpClient *http, HttpClient_on_chunk_cb on_chunk_cb);
 // last chunk of data is received
 void http_client_set_on_last_chunk_cb (HttpClient *http, HttpClient_on_chunk_cb on_last_chunk_cb);
@@ -63,5 +66,6 @@ void http_client_set_close_cb (HttpClient *http, HttpClient_on_close_cb on_close
 typedef void (*HttpClient_on_connection_cb) (HttpClient *http, gpointer ctx);
 void http_client_set_connection_cb (HttpClient *http, HttpClient_on_connection_cb on_connection_cb);
 
+ClientInfo *http_client_get_info (gpointer client);
 
 #endif

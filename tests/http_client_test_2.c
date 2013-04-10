@@ -200,7 +200,7 @@ static void send_request (FileData *fdata)
 
     http_client_set_output_length (app->http, 0);
 
-    http_client_start_request_to_storage_url (app->http, Method_get, fdata->in_name);
+    http_client_start_request_to_storage_url (app->http, Method_get, fdata->in_name, NULL, NULL);
 }
 
 static void on_output_timer (evutil_socket_t fd, short event, void *ctx)
@@ -335,6 +335,25 @@ const gchar *application_get_storage_url (Application *app)
 HfsStatsSrv *application_get_stats_srv (Application *app)
 {
     return app->stats;
+}
+
+ClientPool *application_get_write_client_pool (Application *app)
+{
+    return NULL;
+}
+
+ClientPool *application_get_read_client_pool (Application *app)
+{
+    return NULL;
+}
+
+ClientPool *application_get_ops_client_pool (Application *app)
+{
+    return NULL;
+}
+SSL_CTX *application_get_ssl_ctx (Application *app)
+{
+    return NULL;
 }
 
 /*}}}*/

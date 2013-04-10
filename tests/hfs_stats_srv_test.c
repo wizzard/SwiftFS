@@ -46,6 +46,20 @@ HfsStatsSrv *application_get_stats_srv (Application *app)
     return app->stats;
 }
 
+ClientPool *application_get_write_client_pool (Application *app)
+{
+    return NULL;
+}
+
+ClientPool *application_get_read_client_pool (Application *app)
+{
+    return NULL;
+}
+
+ClientPool *application_get_ops_client_pool (Application *app)
+{
+    return NULL;
+}
 
 static void on_timer_cb (evutil_socket_t fd, short event, void *ctx)
 {

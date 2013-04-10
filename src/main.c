@@ -738,6 +738,7 @@ int main (int argc, char *argv[])
     }
 
     // create ClientPool for writing operations
+    /*
     app->write_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.writers"),
         http_connection_create,
         http_connection_destroy,
@@ -745,6 +746,15 @@ int main (int argc, char *argv[])
         http_connection_check_rediness,
         http_connection_get_info
         );
+    */
+    app->write_client_pool = client_pool_create (app, conf_get_int (app->conf, "pool.writers"),
+        http_client_create,
+        http_client_destroy,
+        http_client_set_on_released_cb,
+        http_client_check_rediness,
+        http_client_get_info
+        );
+
     if (!app->write_client_pool) {
         LOG_err (APP_LOG, "Failed to create ClientPool !");
         event_base_loopexit (app->evbase, NULL);

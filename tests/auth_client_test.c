@@ -50,6 +50,22 @@ HfsStatsSrv *application_get_stats_srv (Application *app)
 {
     return app->stats;
 }
+
+ClientPool *application_get_write_client_pool (Application *app)
+{
+    return NULL;
+}
+
+ClientPool *application_get_read_client_pool (Application *app)
+{
+    return NULL;
+}
+
+ClientPool *application_get_ops_client_pool (Application *app)
+{
+    return NULL;
+}
+
 /*}}}*/
 
 gboolean check_list (GList *l)

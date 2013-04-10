@@ -72,6 +72,12 @@ struct _HttpClient {
 
     gpointer pool_ctx;
     ClientPool_on_released_cb client_on_released_cb;
+
+    gchar *s_status;
+    guint64 upload_bytes;
+    struct timeval start_tv;
+
+    gchar *auth_token;
 };
 
 // HTTP header: key, value
@@ -87,6 +93,7 @@ static void http_client_write_cb (struct bufferevent *bev, void *ctx);
 static void http_client_event_cb (struct bufferevent *bev, short what, void *ctx);
 static gboolean http_client_send_initial_request (HttpClient *http);
 static void http_client_free_headers (GList *l_headers);
+static gboolean http_client_is_response_code_ok (HttpClient *http);
 
 /*}}}*/
 
@@ -123,6 +130,9 @@ gpointer http_client_create (Application *app)
     http->l_input_headers = NULL;
     http->l_output_headers = NULL;
 
+    http->s_status = g_strdup ("idle");
+    http->auth_token = NULL;
+
     http_client_request_reset (http);
 
     return (gpointer) http;
@@ -145,6 +155,8 @@ void http_client_destroy (gpointer data)
         http_client_free_headers (http->l_output_headers);
     if (http->response_code_line)
         g_free (http->response_code_line);
+    if (http->auth_token)
+        g_free (http->auth_token);
     g_free (http->url);
     g_free (http);
 }
@@ -316,6 +328,7 @@ static void http_client_read_cb (struct bufferevent *bev, void *ctx)
 {
     HttpClient *http = (HttpClient *) ctx;
     struct evbuffer *in_buf;
+    gboolean success;
 
     in_buf = bufferevent_get_input (bev);
     
@@ -356,7 +369,7 @@ static void http_client_read_cb (struct bufferevent *bev, void *ctx)
 
             // inform client that a end of data is received
             if (http->on_last_chunk_cb)
-                http->on_last_chunk_cb (http, http->input_buffer, http->cb_ctx);
+                http->on_last_chunk_cb (http, http->input_buffer, http_client_is_response_code_ok (http), http->cb_ctx);
 
             http->response_state = R_expected_first_line;
             // rest
@@ -370,9 +383,10 @@ static void http_client_read_cb (struct bufferevent *bev, void *ctx)
         // only the part of it
         } else {
             // inform client that a part of data is received
-            if (http->on_chunk_cb)
-                http->on_chunk_cb (http, http->input_buffer, http->cb_ctx);
+            if (http->on_chunk_cb) {
+                http->on_chunk_cb (http, http->input_buffer, http_client_is_response_code_ok (http), http->cb_ctx);
             }
+        }
     }
 }
 
@@ -446,7 +460,27 @@ static void http_client_connect (HttpClient *http)
     if (http->bev)
         bufferevent_free (http->bev);
 
-    http->bev = bufferevent_socket_new (http->evbase, -1, BEV_OPT_CLOSE_ON_FREE);
+    if (uri_is_https (http->http_uri)) {
+        SSL *ssl;
+
+		ssl = SSL_new (application_get_ssl_ctx (http->app));
+
+		http->bev = bufferevent_openssl_socket_new (
+            http->evbase,
+            -1,
+            ssl,
+		    BUFFEREVENT_SSL_CONNECTING,
+		    BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS
+        );
+
+        // LOG_err (CON_LOG, "Using SSL !");
+    } else {
+		http->bev = bufferevent_socket_new (
+            http->evbase,
+            -1,
+		    BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS);
+    }
+
     if (!http->bev) {
         LOG_err (HTTP_LOG, "Failed to create HTTP object!");
     }
@@ -610,6 +644,7 @@ static gboolean http_client_send_initial_request (HttpClient *http)
     // ask to keep connection opened
     evbuffer_add_printf (out_buf, "Connection: %s\r\n", "keep-alive");
     evbuffer_add_printf (out_buf, "Accept-Encoding: %s\r\n", "identify");
+    evbuffer_add_printf (out_buf, "X-Auth-Token: %s\r\n", http->auth_token);
 
     // end line
     evbuffer_add_printf (out_buf, "\r\n");
@@ -620,7 +655,7 @@ static gboolean http_client_send_initial_request (HttpClient *http)
     
     http->output_sent += evbuffer_get_length (out_buf);
 
-    LOG_debug (HTTP_LOG, "Request is sent !");
+    LOG_debug (HTTP_LOG, "%s %s  Request is sent !", http_client_method_to_string (http->method), evhttp_uri_get_path (http->http_uri));
    // g_printf ("\n==============================\n%s\n======================\n",
    //     evbuffer_pullup (out_buf, -1));
 
@@ -678,6 +713,15 @@ static void http_client_on_auth_data_cb (gpointer ctx, gboolean success,
         goto done;
     }
 
+    if (req->http->auth_token) {
+        if (strcmp (req->http->auth_token, auth_token)) {
+            g_free (req->http->auth_token);
+            req->http->auth_token = g_strdup (auth_token);
+        }
+    } else 
+        req->http->auth_token = g_strdup (auth_token);
+
+
     url = g_strdup_printf ("%s%s", storage_uri, req->path);
 
     http_client_start_request_ (req->http, req->method, url);
@@ -689,7 +733,11 @@ done:
 }
 
 // get AuthData and perform HTTP request to StorageURL
-gboolean http_client_start_request_to_storage_url (HttpClient *http, HttpClientRequestMethod method, const gchar *path)
+gboolean http_client_start_request_to_storage_url (HttpClient *http, HttpClientRequestMethod method, 
+    const gchar *path,
+    struct evbuffer *out_buffer,
+    gpointer ctx
+    )
 {
     ARequest *req;
 
@@ -698,7 +746,16 @@ gboolean http_client_start_request_to_storage_url (HttpClient *http, HttpClientR
     req->method = method;
     req->path = g_strdup (path);
 
+    if (out_buffer) {
+        http->output_length = evbuffer_get_length (out_buffer);
+        evbuffer_add_buffer (http->output_buffer, out_buffer);
+    }
+
+    if (ctx)
+        http_client_set_cb_ctx (http, ctx);
+
     auth_client_get_data (application_get_auth_client (http->app), FALSE, http_client_on_auth_data_cb, req);
+    
     return TRUE;
 }
 
@@ -765,5 +822,32 @@ void http_client_set_close_cb (HttpClient *http, HttpClient_on_close_cb on_close
 void http_client_set_connection_cb (HttpClient *http, HttpClient_on_connection_cb on_connection_cb)
 {
     http->on_connection_cb = on_connection_cb;
+}
+
+static gboolean http_client_is_response_code_ok (HttpClient *http)
+{
+    // 200 (Ok), 201 (Created), 202 (Accepted), 204 (No Content) are ok
+    
+    if (http->response_code == 200 ||
+            http->response_code == 201 ||
+            http->response_code == 202 ||
+            http->response_code == 204 
+        )
+        return TRUE;
+    return FALSE;
+}
+
+ClientInfo *http_client_get_info (gpointer client)
+{
+    HttpClient *http = (HttpClient *) client;
+    ClientInfo *info = g_new0 (ClientInfo, 1);
+    
+    info->con = http;
+    info->status = g_strdup (http->s_status);
+    if (http->upload_bytes)
+        info->bytes = http->upload_bytes;
+    timeval_copy (&info->start_tv, &http->start_tv);
+    
+    return info;
 }
 

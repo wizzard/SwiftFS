@@ -4,6 +4,7 @@
  */
 #include "hfs_file_operation.h"
 #include "http_connection.h"
+#include "http_client.h"
 #include "cache_mng.h"
 #include "hfs_encryption.h"
 #include "hfs_stats_srv.h"
@@ -87,14 +88,13 @@ void hfs_fileop_destroy (HfsFileOp *fop)
 /*{{{ hfs_fileop_release*/
 
 // either manifest of segment buffer is sent
-static void hfs_fileop_release_on_sent_cb (HttpConnection *con, void *ctx, 
-    const gchar *buf, size_t buf_len, 
-    struct evkeyvalq *headers, gboolean success)
+static void hfs_fileop_release_on_sent_cb (HttpClient *http, struct evbuffer *data_buf, 
+    gboolean success, gpointer ctx)
 {   
     HfsFileOp *fop = (HfsFileOp *) ctx;
     
-    // release HttpConnection
-    http_connection_release (con);
+    // release HttpClient
+    http_client_release (http);
 
     // at this point segment buffer must be sent
     if (evbuffer_get_length (fop->segment_buf) > 0) {
@@ -120,20 +120,20 @@ static void hfs_fileop_release_on_sent_cb (HttpConnection *con, void *ctx,
     }
 }
 
-// got HTTPConnection object
+// got HTTPClient object
 // send either "manifest" or "segment"
 static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
 {
-    HttpConnection *con = (HttpConnection *) client;
+    HttpClient *http = (HttpClient *) client;
     HfsFileOp *fop = (HfsFileOp *) ctx;
     gchar *req_path = NULL;
     gboolean res;
     gchar s[20];
     gboolean send_request = TRUE;
 
-    LOG_debug (FOP_LOG, "[http_con: %p] Releasing fop, seg count: %zd", con, fop->segment_count);
+    LOG_debug (FOP_LOG, "[http: %p] Releasing fop, seg count: %zd", http, fop->segment_count);
     
-    http_connection_acquire (con);
+    http_client_acquire (http);
 
     // if segment buffer is empty: either send manifest (for large file) or just create an empty file
     if (evbuffer_get_length (fop->segment_buf) ==  0) {
@@ -146,21 +146,21 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
         if (fop->segment_count > 0) {
             gchar *tmp;
 
-            tmp = g_strdup_printf ("%s/%s/", application_get_container_name (con->app), 
+            tmp = g_strdup_printf ("%s/%s/", application_get_container_name (fop->app), 
                 fop->fname);
-            http_connection_add_output_header (con, "X-Object-Manifest", tmp);
+            http_client_add_output_header (http, "X-Object-Manifest", tmp);
             LOG_err (FOP_LOG, "manifest: %s", tmp);
             g_free (tmp);
 
 
             g_snprintf (s, sizeof (s), "%zu", fop->segment_size);
-            http_connection_add_output_header (con, "X-Object-Meta-Segment-Size", s);
+            http_client_add_output_header (http, "X-Object-Meta-Segment-Size", s);
 
-            req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), fop->fname);
+            req_path = g_strdup_printf ("/%s/%s", application_get_container_name (fop->app), fop->fname);
 
             g_snprintf (s, sizeof (s), "%zu", fop->current_size_orig);
             // add Meta header with object's size
-            http_connection_add_output_header (con, "X-Object-Meta-Size", s);
+            http_client_add_output_header (http, "X-Object-Meta-Size", s);
 
         // an empty file
         } else {
@@ -176,12 +176,12 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
         // "large file", send segment
         if (fop->segment_count > 0) {
             // send segment buffer, then send manifest (if file is a large)
-            req_path = g_strdup_printf ("/%s/%s/%zu", application_get_container_name (con->app), 
+            req_path = g_strdup_printf ("/%s/%s/%zu", application_get_container_name (fop->app), 
                 fop->fname, fop->segment_count);
         
         // send a "small" file
         } else {
-            req_path = g_strdup_printf ("/%s/%s", application_get_container_name (con->app), 
+            req_path = g_strdup_printf ("/%s/%s", application_get_container_name (fop->app), 
                 fop->fname);
 
             // mark that a manifest file is handled (for small files - mark as handled as well)
@@ -189,7 +189,7 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
 
             g_snprintf (s, sizeof (s), "%zu", fop->current_size_orig);
             // add Meta header with object's size
-            http_connection_add_output_header (con, "X-Object-Meta-Size", s);
+            http_client_add_output_header (http, "X-Object-Meta-Size", s);
         }
 
             // encryption
@@ -201,25 +201,25 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
 
             in_buf = evbuffer_pullup (fop->segment_buf, -1);
             len = evbuffer_get_length (fop->segment_buf);
-            out_buf = hfs_encryption_encrypt (application_get_encryption (con->app), in_buf, &len);
+            out_buf = hfs_encryption_encrypt (application_get_encryption (fop->app), in_buf, &len);
             evbuffer_drain (fop->segment_buf, -1);
             evbuffer_add (fop->segment_buf, out_buf, len);
             g_free (out_buf);
             
             // set header
-            http_connection_add_output_header (con, "X-Object-Meta-Encrypted", "True");
+            http_client_add_output_header (http, "X-Object-Meta-Encrypted", "True");
         }
     }
 
     if (send_request) {
-        res = http_connection_make_request_to_storage_url (con, 
-            req_path, "PUT", fop->segment_buf,
-            hfs_fileop_release_on_sent_cb,
+        http_client_set_on_last_chunk_cb (http, hfs_fileop_release_on_sent_cb);
+        res = http_client_start_request_to_storage_url (http, 
+            Method_put, req_path, fop->segment_buf,
             fop
         );
         if (!res) {
             LOG_err (FOP_LOG, "Failed to create HTTP request !");
-            http_connection_release (con);
+            http_client_release (http);
             g_free (req_path);
             return;
         }
@@ -232,8 +232,8 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
 
     // or we are done
     if (!send_request) {
-        // release HttpConnection
-        http_connection_release (con);
+        // release HttpClient
+        http_client_release (http);
         hfs_fileop_release (fop);
     }
 }
@@ -246,7 +246,7 @@ void hfs_fileop_release (HfsFileOp *fop)
     if (fop->write_called) {
         fop->l_write_data = g_list_append (fop->l_write_data, NULL);
 
-        // get HTTP connection to upload segment (for small file) or manifest (for large file)
+        // get HTTP client to upload segment (for small file) or manifest (for large file)
         if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_release_on_http_client_cb, fop)) {
             LOG_err (FOP_LOG, "Failed to get HTTP client !");
             return;
@@ -287,19 +287,18 @@ static void write_data_destroy (FileOpWriteData *write_data)
         g_free (write_data);
 }
 
-static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx);
+static void hfs_fileop_write_on_http_cb (gpointer client, gpointer ctx);
 
 // segment buffer is sent, check if there is more data left in segment buffer
-static void hfs_fileop_write_on_sent_cb (HttpConnection *con, void *ctx, 
-    const gchar *buf, size_t buf_len, 
-    struct evkeyvalq *headers, gboolean success)
+static void hfs_fileop_write_on_sent_cb (HttpClient *http, struct evbuffer *data_buf, 
+    gboolean success, gpointer ctx)
 {
     FileOpWriteData *write_data = (FileOpWriteData *) ctx;
     HfsFileOp *fop = NULL;
     
-    LOG_debug (FOP_LOG, "[%p] Segment uploaded !", con);
-    // release HttpConnection
-    http_connection_release (con);
+    LOG_debug (FOP_LOG, "[%p] Segment uploaded !", http);
+    // release HttpClient
+    http_client_release (http);
 
     if (!success) {
         LOG_err (FOP_LOG, "Failed to upload segment !");
@@ -312,8 +311,8 @@ static void hfs_fileop_write_on_sent_cb (HttpConnection *con, void *ctx,
     // check if we need to flush segment buffer
     if (evbuffer_get_length (fop->segment_buf) >= fop->segment_size) {
 
-        // get HTTP connection to upload segment (for small file) or manifest (for large file)
-        if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_write_on_con_cb, write_data)) {
+        // get HTTP client to upload segment (for small file) or manifest (for large file)
+        if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_write_on_http_cb, write_data)) {
             LOG_err (FOP_LOG, "Failed to get HTTP client !");
             write_data_destroy (write_data);
             return;
@@ -326,11 +325,11 @@ static void hfs_fileop_write_on_sent_cb (HttpConnection *con, void *ctx,
     }
 }
 
-// got HTTPConnection object
+// got HTTP object
 // send "segment"
-static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
+static void hfs_fileop_write_on_http_cb (gpointer client, gpointer ctx)
 {
-    HttpConnection *con = (HttpConnection *) client;
+    HttpClient *http = (HttpClient *) client;
     FileOpWriteData *write_data = (FileOpWriteData *) ctx;
     HfsFileOp *fop = NULL;
     gchar *req_path = NULL;
@@ -338,12 +337,12 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
     struct evbuffer *seg;
     unsigned char *buf;
 
-    http_connection_acquire (con);
+    http_client_acquire (http);
 
     fop = write_data->fop;
 
     // send segment buffer
-    req_path = g_strdup_printf ("/%s/%s/%zu", application_get_container_name (con->app), 
+    req_path = g_strdup_printf ("/%s/%s/%zu", application_get_container_name (fop->app), 
         fop->fname, fop->segment_count);
 
     fop->segment_count ++;
@@ -375,18 +374,18 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
 
         in_buf = evbuffer_pullup (seg, -1);
         len = evbuffer_get_length (seg);
-        out_buf = hfs_encryption_encrypt (application_get_encryption (con->app), in_buf, &len);
+        out_buf = hfs_encryption_encrypt (application_get_encryption (fop->app), in_buf, &len);
         evbuffer_drain (seg, -1);
         evbuffer_add (seg, out_buf, len);
         g_free (out_buf);
         
         // set header
-        http_connection_add_output_header (con, "X-Object-Meta-Encrypted", "True");
+        http_client_add_output_header (http, "X-Object-Meta-Encrypted", "True");
     }
 
-    res = http_connection_make_request_to_storage_url (con, 
-        req_path, "PUT", seg,
-        hfs_fileop_write_on_sent_cb,
+    http_client_set_on_last_chunk_cb (http, hfs_fileop_write_on_sent_cb);
+    res = http_client_start_request_to_storage_url (http, 
+        Method_put, req_path, seg,
         write_data
     );
     evbuffer_free (seg);
@@ -398,7 +397,7 @@ static void hfs_fileop_write_on_con_cb (gpointer client, gpointer ctx)
 
     if (!res) {
         LOG_err (FOP_LOG, "Failed to create HTTP request !");
-        http_connection_release (con);
+        http_client_release (http);
         write_data->on_buffer_written_cb (fop, write_data->ctx, FALSE, 0);
         write_data_destroy (write_data);
         return;
@@ -450,8 +449,8 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
 
         fop->l_write_data = g_list_append (fop->l_write_data, write_data);
 
-        // get HTTP connection to upload segment (for small file) or manifest (for large file)
-        if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_write_on_con_cb, write_data)) {
+        // get HTTP client to upload segment (for small file) or manifest (for large file)
+        if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_write_on_http_cb, write_data)) {
             LOG_err (FOP_LOG, "Failed to get HTTP client !");
             on_buffer_written_cb (fop, ctx, FALSE, 0);
             write_data_destroy (write_data);

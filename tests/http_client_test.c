@@ -84,6 +84,25 @@ HfsStatsSrv *application_get_stats_srv (Application *app)
     return app->stats;
 }
 
+ClientPool *application_get_write_client_pool (Application *app)
+{
+    return NULL;
+}
+
+ClientPool *application_get_read_client_pool (Application *app)
+{
+    return NULL;
+}
+
+ClientPool *application_get_ops_client_pool (Application *app)
+{
+    return NULL;
+}
+
+SSL_CTX *application_get_ssl_ctx (Application *app)
+{
+    return NULL;
+}
 
 
 static void on_output_timer (evutil_socket_t fd, short event, void *ctx)
@@ -304,7 +323,7 @@ static void run_responce_test (struct event_base *evbase, struct evdns_base *dns
     http_client_set_on_chunk_cb (http, on_input_data_cb);
     http_client_set_output_length (http, 1);
 
-    http_client_start_request_to_storage_url (http, Method_get, "/index.html");
+    http_client_start_request_to_storage_url (http, Method_get, "/index.html", NULL, NULL);
     
     event_base_dispatch (evbase);
     
@@ -352,7 +371,7 @@ static void on_http_close (HttpClient *http, void *ctx)
  //   http_client_set_output_length (out->http, 1);
  //   http_client_add_output_data (out->http, &c, 1);
 
-    http_client_start_request_to_storage_url (out->http, Method_get, "/index.html");
+    http_client_start_request_to_storage_url (out->http, Method_get, "/index.html", NULL, NULL);
 }
 
 static void run_request_test (struct event_base *evbase, struct evdns_base *dns_base, TestID test_id)
@@ -381,7 +400,7 @@ static void run_request_test (struct event_base *evbase, struct evdns_base *dns_
     //http_client_set_output_length (out->http, 1);
     //http_client_add_output_data (out->http, &c, 1);
 
-    http_client_start_request_to_storage_url (out->http, Method_get, "/index.html");
+    http_client_start_request_to_storage_url (out->http, Method_get, "/index.html", NULL, NULL);
     
     event_base_dispatch (evbase);
     
