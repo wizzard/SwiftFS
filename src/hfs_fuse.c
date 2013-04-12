@@ -28,6 +28,7 @@ struct _HfsFuse {
 /*}}}*/
 
 /*{{{ func declarations */
+static void hfs_fuse_init (void *userdata, struct fuse_conn_info *conn);
 static void hfs_fuse_on_read (evutil_socket_t fd, short what, void *arg);
 static void hfs_fuse_readdir (fuse_req_t req, fuse_ino_t ino, 
     size_t size, off_t off, struct fuse_file_info *fi);
@@ -46,6 +47,7 @@ static void hfs_fuse_rmdir (fuse_req_t req, fuse_ino_t parent_ino, const char *n
 static void hfs_fuse_on_timer (evutil_socket_t fd, short what, void *arg);
 
 static struct fuse_lowlevel_ops hfs_fuse_opers = {
+    .init       = hfs_fuse_init,
 	.readdir	= hfs_fuse_readdir,
 	.lookup		= hfs_fuse_lookup,
     .getattr	= hfs_fuse_getattr,
@@ -180,6 +182,12 @@ static void hfs_fuse_on_timer (evutil_socket_t fd, short what, void *arg)
         return NULL;
     }
 */
+}
+
+// turn ASYNC read off
+static void hfs_fuse_init (G_GNUC_UNUSED void *userdata, struct fuse_conn_info *conn)
+{
+    conn->async_read = 0;
 }
 
 // low level fuse reading operations
