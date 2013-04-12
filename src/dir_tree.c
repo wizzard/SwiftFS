@@ -36,7 +36,6 @@ struct _DirEntry {
 
     GHashTable *h_dir_tree; // name -> data
 
-    HfsFileOp *fop; // file operation object
     gboolean is_segmented; // TRUE if file contains of segments
     gboolean is_updating; // TRUE if getting attributes
 };
@@ -156,7 +155,6 @@ static DirEntry *dir_tree_add_entry (DirTree *dtree, const gchar *basename, mode
     }
 
     en = g_new0 (DirEntry, 1);
-    en->fop = NULL;
     en->is_segmented = FALSE;
     en->is_updating = FALSE;
     en->fullpath = fullpath;
@@ -993,7 +991,7 @@ void dir_tree_file_create (DirTree *dtree, fuse_ino_t parent_ino, const char *na
     en->is_modified = TRUE;
 
     fop = hfs_fileop_create (dtree->app, en->fullpath);
-    en->fop = fop;
+    fi->fh = (uint64_t) fop;
 
     LOG_debug (DIR_TREE_LOG, "[fop: %p] create %s, directory ino: %"INO_FMT, fop, name, parent_ino);
 
@@ -1020,7 +1018,7 @@ void dir_tree_file_open (DirTree *dtree, fuse_ino_t ino, struct fuse_file_info *
     }
 
     fop = hfs_fileop_create (dtree->app, en->fullpath);
-    en->fop = fop;
+    fi->fh = (uint64_t) fop;
 
     LOG_debug (DIR_TREE_LOG, "[fop: %p] dir_tree_open inode %"INO_FMT, fop, ino);
 
@@ -1045,7 +1043,7 @@ void dir_tree_file_release (DirTree *dtree, fuse_ino_t ino, struct fuse_file_inf
         return;
     }
 
-    fop = en->fop;
+    fop = (HfsFileOp *) fi->fh;
 
     LOG_debug (DIR_TREE_LOG, "[fop: %p] dir_tree_file_release inode: %"INO_FMT, fop, ino);
 
@@ -1098,7 +1096,7 @@ void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino,
         return;
     }
     
-    fop = en->fop;
+    fop = (HfsFileOp *) fi->fh;
 
     LOG_debug (DIR_TREE_LOG, "[fop: %p] read inode %"INO_FMT", size: %zd, off: %"OFF_FMT, fop, ino, size, off);
     
@@ -1150,7 +1148,7 @@ void dir_tree_file_write (DirTree *dtree, fuse_ino_t ino,
         return;
     }
     
-    fop = en->fop;
+    fop = (HfsFileOp *) fi->fh;
     
     // LOG_debug (DIR_TREE_LOG, "[fop: %p] write inode %"INO_FMT", size: %zd, off: %"OFF_FMT, fop, ino, size, off);
 
