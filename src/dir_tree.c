@@ -353,6 +353,9 @@ void dir_tree_fill_on_dir_buf_cb (gpointer callback_data, gboolean success)
             if (tmp_en->age >= dir_fill_data->dtree->current_age)
                 hfs_fuse_add_dirbuf (dir_fill_data->req, &b, tmp_en->basename, tmp_en->ino, tmp_en->size);
         }
+        if (dir_fill_data->en->dir_cache)
+            g_free (dir_fill_data->en->dir_cache);
+
         // done, save as cache
         dir_fill_data->en->dir_cache_size = b.size;
         dir_fill_data->en->dir_cache = g_malloc (b.size);
