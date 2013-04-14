@@ -18,7 +18,7 @@ typedef enum {
 gpointer http_client_create (Application *app);
 void http_client_destroy (gpointer data);
 
-void http_client_request_reset (HttpClient *http);
+void http_client_request_reset (HttpClient *http, gboolean free_output_headers);
 
 void http_client_set_output_length (HttpClient *http, guint64 output_lenght);
 void http_client_add_output_header (HttpClient *http, const gchar *key, const gchar *value);

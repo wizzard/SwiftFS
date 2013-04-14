@@ -71,7 +71,7 @@ void hfs_fileop_destroy (HfsFileOp *fop)
 {
     struct timeval end_tv;
     
-    LOG_debug (FOP_LOG, "FileOP destroy !");
+    LOG_err (FOP_LOG, "FileOP destroy !");
 
     gettimeofday (&end_tv, NULL);
     hfs_stats_srv_add_history (application_get_stats_srv (fop->app), 
@@ -103,19 +103,31 @@ static void hfs_fileop_release_on_sent_cb (HttpClient *http, struct evbuffer *da
     
     // if manifest is handled - we are done
     if (fop->manifest_handled) {
-            GList *l;
+        GList *l;
 
+        LOG_err (FOP_LOG, "xList len: %d", g_list_length (fop->l_write_data));
         for (l = g_list_first (fop->l_write_data); l; l = g_list_next (l)) {
             if (l->data == NULL) {
                 fop->l_write_data = g_list_delete_link (fop->l_write_data, l);
                 break;
             }
         }
+        LOG_err (FOP_LOG, "xList len: %d", g_list_length (fop->l_write_data));
 
         if (g_list_length (fop->l_write_data) == 0)
             hfs_fileop_destroy (fop);
     // last segment is sent, but we need to send manifest - repeat
     } else {
+        GList *l;
+        LOG_err (FOP_LOG, "xxList len: %d", g_list_length (fop->l_write_data));
+        for (l = g_list_first (fop->l_write_data); l; l = g_list_next (l)) {
+            if (l->data == NULL) {
+                fop->l_write_data = g_list_delete_link (fop->l_write_data, l);
+                break;
+            }
+        }
+        LOG_err (FOP_LOG, "xxList len: %d", g_list_length (fop->l_write_data));
+
         hfs_fileop_release (fop);
     }
 }
@@ -146,6 +158,7 @@ static void hfs_fileop_release_on_http_client_cb (gpointer client, gpointer ctx)
         if (fop->segment_count > 0) {
             gchar *tmp;
 
+        LOG_err (FOP_LOG, "SENDING Manifest !!");
             tmp = g_strdup_printf ("%s/%s/", application_get_container_name (fop->app), 
                 fop->fname);
             http_client_add_output_header (http, "X-Object-Manifest", tmp);
@@ -245,6 +258,7 @@ void hfs_fileop_release (HfsFileOp *fop)
 
     if (fop->write_called) {
         fop->l_write_data = g_list_append (fop->l_write_data, NULL);
+        LOG_err (FOP_LOG, "xADDED: %d", g_list_length (fop->l_write_data));
 
         // get HTTP client to upload segment (for small file) or manifest (for large file)
         if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_release_on_http_client_cb, fop)) {
@@ -265,11 +279,14 @@ typedef struct {
     HfsFileOp_on_buffer_written_cb on_buffer_written_cb;
     size_t buf_size;
     gpointer ctx;
+    gboolean fuse_notified;
 } FileOpWriteData;
 
 static void write_data_destroy (FileOpWriteData *write_data)
 {
     GList *l;
+
+    LOG_err (FOP_LOG, "List len: %d", g_list_length (write_data->fop->l_write_data));
 
     for (l = g_list_first (write_data->fop->l_write_data); l; l = g_list_next (l)) {
         FileOpWriteData *tmp = (FileOpWriteData *) l->data;
@@ -279,8 +296,9 @@ static void write_data_destroy (FileOpWriteData *write_data)
             break;
         }
     }
+    LOG_err (FOP_LOG, "List len: %d", g_list_length (write_data->fop->l_write_data));
 
-    if (g_list_first (write_data->fop->l_write_data) == 0 && write_data->fop->released)
+    if (g_list_length (write_data->fop->l_write_data) == 0 && write_data->fop->released)
         hfs_fileop_destroy (write_data->fop);
 
     if (write_data)
@@ -296,7 +314,7 @@ static void hfs_fileop_write_on_sent_cb (HttpClient *http, struct evbuffer *data
     FileOpWriteData *write_data = (FileOpWriteData *) ctx;
     HfsFileOp *fop = NULL;
     
-    LOG_debug (FOP_LOG, "[%p] Segment uploaded !", http);
+    LOG_debug (FOP_LOG, "[%p] Segment uploaded ! [write_data: %p]", http, write_data);
     // release HttpClient
     http_client_release (http);
 
@@ -311,6 +329,7 @@ static void hfs_fileop_write_on_sent_cb (HttpClient *http, struct evbuffer *data
     // check if we need to flush segment buffer
     if (evbuffer_get_length (fop->segment_buf) >= fop->segment_size) {
 
+        LOG_err (FOP_LOG, "XXXX more ??");
         // get HTTP client to upload segment (for small file) or manifest (for large file)
         if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_write_on_http_cb, write_data)) {
             LOG_err (FOP_LOG, "Failed to get HTTP client !");
@@ -403,8 +422,11 @@ static void hfs_fileop_write_on_http_cb (gpointer client, gpointer ctx)
         return;
     }
 
-    // XXX 
-    write_data->on_buffer_written_cb (write_data->fop, write_data->ctx, TRUE, write_data->buf_size);
+    // XXX
+    if (!write_data->fuse_notified) {
+        write_data->fuse_notified = TRUE;
+        write_data->on_buffer_written_cb (write_data->fop, write_data->ctx, TRUE, write_data->buf_size);
+    }
 }
 
 // Add data to segment buffer
@@ -446,8 +468,10 @@ void hfs_fileop_write_buffer (HfsFileOp *fop,
         write_data->on_buffer_written_cb = on_buffer_written_cb;
         write_data->ctx = ctx;
         write_data->buf_size = buf_size;
+        write_data->fuse_notified = FALSE;
 
         fop->l_write_data = g_list_append (fop->l_write_data, write_data);
+        LOG_err (FOP_LOG, "ADDED [write_data: %p]  %d", write_data, g_list_length (fop->l_write_data));
 
         // get HTTP client to upload segment (for small file) or manifest (for large file)
         if (!client_pool_get_client (application_get_write_client_pool (fop->app), hfs_fileop_write_on_http_cb, write_data)) {
@@ -898,6 +922,7 @@ void hfs_fileop_read_buffer (HfsFileOp *fop,
 
     if (!fop->initial_head_sent) {
         fop->initial_head_sent = TRUE;
+        LOG_debug (FOP_LOG, "Sending HEAD request !");
 
         // get HTTP connection to download manifest or a full file
         if (!client_pool_get_client (application_get_read_client_pool (fop->app), hfs_fileop_read_manifest_on_con_cb, read_data)) {

@@ -184,7 +184,7 @@ static void auth_client_on_close_cb (struct evhttp_connection *evcon, void *ctx)
 {
     AuthClient *auth_client = (AuthClient *) ctx;
 
-    LOG_debug (AUTH_LOG, "Connection closed");
+    LOG_debug (AUTH_LOG, "[evcon: %p auth: %p] Connection closed", evcon, auth_client);
 
     //evhttp_connection_free (evcon);
 }
@@ -193,9 +193,6 @@ static void auth_client_on_close_cb (struct evhttp_connection *evcon, void *ctx)
 static void auth_client_on_response_cb (struct evhttp_request *req, void *ctx)
 {
     AuthClient *auth_client = (AuthClient *) ctx;
-    struct evbuffer *inbuf;
-    const char *buf;
-    size_t buf_len;
     GList *l;
     const gchar *storage_url;
     const gchar *auth_token;

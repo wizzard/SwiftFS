@@ -76,15 +76,15 @@ void cache_mng_destroy (CacheMng *cmng)
 }
 
 // return TRUE if entry should be removed
-static gboolean cache_mng_on_remove_file_cb (gpointer key, gpointer value, gpointer ctx)
+static gboolean cache_mng_on_remove_file_cb (gpointer key, gpointer value, G_GNUC_UNUSED gpointer ctx)
 {
-    CacheMng *cmng = (CacheMng *) ctx;
+    // CacheMng *cmng = (CacheMng *) ctx;
     CacheEntry *en = (CacheEntry *) value;
     fuse_ino_t ino = GPOINTER_TO_UINT (key);
     time_t now = time (NULL);
 
     if (now > en->atime && now - en->atime >= conf_get_uint (en->cmng->conf, "filesystem.cache_object_ttl")) {
-        LOG_debug (CMNG_LOG, "Object expired, ino: %"INO_FMT, ino);
+        LOG_debug (CMNG_LOG, "Object expired, ino: %"INO_FMT, INO ino);
         return TRUE;
     }
 
@@ -92,7 +92,7 @@ static gboolean cache_mng_on_remove_file_cb (gpointer key, gpointer value, gpoin
 }
 
 // on timer, check objects in cache to remove expired
-static void cache_mng_on_cache_check_cb (evutil_socket_t fd, short event, void *ctx)
+static void cache_mng_on_cache_check_cb (G_GNUC_UNUSED evutil_socket_t fd, G_GNUC_UNUSED short event, void *ctx)
 {
     struct timeval tv;
     CacheMng *cmng = (CacheMng *) ctx;
@@ -114,7 +114,7 @@ static CacheEntry *cache_entry_create (CacheMng *cmng, fuse_ino_t ino)
 
     en = g_new0 (CacheEntry, 1);
     en->cmng = cmng;
-    en->fname = g_strdup_printf ("%s/%"INO_FMT, conf_get_string (cmng->conf, "filesystem.cache_dir"), ino);
+    en->fname = g_strdup_printf ("%s/%"INO_FMT, conf_get_string (cmng->conf, "filesystem.cache_dir"), INO ino);
     en->create_time = en->atime = time (NULL);
     en->fd = -1;
     en->range = hfs_range_create ();
@@ -131,7 +131,7 @@ static CacheEntry *cache_entry_create (CacheMng *cmng, fuse_ino_t ino)
 
 static void cache_entry_destroy (CacheEntry *en)
 {
-    hfs_range_create (en->range);
+    hfs_range_destroy (en->range);
     g_free (en->fname);
     if (en->fd != -1)
         close (en->fd);
@@ -158,7 +158,7 @@ unsigned char *cache_mng_retr_file_data (CacheMng *cmng, fuse_ino_t ino, size_t 
     // check if we have range
     if (!hfs_range_contain (en->range, off, off + size)) {
         hfs_range_print (en->range);
-        LOG_debug (CMNG_LOG, "File doesn't have requested bytes [%zu %zu]  for ino: %"INO_FMT, off, off + size, ino);
+        LOG_debug (CMNG_LOG, "File doesn't have requested bytes [%zu %zu]  for ino: %"INO_FMT, off, off + size, INO ino);
         return NULL;
     }
 
@@ -170,13 +170,13 @@ unsigned char *cache_mng_retr_file_data (CacheMng *cmng, fuse_ino_t ino, size_t 
         return NULL;
     }
 
-    if (out_size != size) {
+    if ((size_t)out_size != size) {
         LOG_debug (CMNG_LOG, "File doesn't have requested bytes range %s", en->fname);
         g_free (buf);
         return NULL;
     }
 
-    LOG_debug (CMNG_LOG, "Retrieved [%zu %zu] bytes for ino: %"INO_FMT, off, off + size, ino);
+    LOG_debug (CMNG_LOG, "Retrieved [%zu %zu] bytes for ino: %"INO_FMT, off, off + size, INO ino);
     cmng->cache_hits++;
     return buf;
 }
@@ -208,13 +208,13 @@ void cache_mng_store_file_data (CacheMng *cmng, fuse_ino_t ino, size_t size, off
     // add to range
     hfs_range_add (en->range, off, off + size);
 
-    // LOG_debug (CMNG_LOG, "Stored [%zu %zu] bytes for ino: %"INO_FMT, off, off + size, ino);
+    // LOG_debug (CMNG_LOG, "Stored [%zu %zu] bytes for ino: %"INO_FMT, off, off + size, INO ino);
 }
 
 
 void cache_mng_remove_file_data (CacheMng *cmng, fuse_ino_t ino)
 {
-    CacheEntry *en;
+    //CacheEntry *en;
     
     if (!conf_get_boolean (cmng->conf, "filesystem.cache_enabled")) {
         return;

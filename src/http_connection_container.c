@@ -13,12 +13,15 @@ typedef struct {
 
 // Directory read callback function
 static void http_connection_on_container_meta_cb (HttpConnection *con, void *ctx, 
-    const gchar *buf, size_t buf_len, 
-    struct evkeyvalq *headers, gboolean success)
+    G_GNUC_UNUSED const gchar *buf, G_GNUC_UNUSED size_t buf_len, 
+    G_GNUC_UNUSED struct evkeyvalq *headers, gboolean success)
 {   
     ContainerMeta *meta = (ContainerMeta *) ctx;
 
     http_connection_release (con);
+
+    if (!success)
+        LOG_err (CON_CONT, "Failed to get container info !");
     
     meta->container_meta_cb (meta->ctx, success);
 

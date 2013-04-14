@@ -86,6 +86,9 @@ void hfs_stats_srv_destroy (HfsStatsSrv *srv)
 
     g_queue_free_full (srv->q_history, (GDestroyNotify ) history_item_destroy);
 
+    if (srv->http)
+        evhttp_free (srv->http);
+
     g_free (srv);
 }
 
@@ -201,7 +204,6 @@ static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg)
     }
 
     {
-        GString *str;
         GList *l_tasks = NULL, *l;
 
         l_tasks = client_pool_get_task_list (application_get_write_client_pool (srv->app), l_tasks, "Upload");
@@ -240,8 +242,14 @@ static void hfs_stats_srv_on_stats_cb (struct evhttp_request *req, void *arg)
             );
             evbuffer_add_printf (evb, "</tr>");
             g_free (start_time);
+
+            g_free (info->pool_name);
+            g_free (info->status);
+            g_free (info);
         }
         evbuffer_add_printf (evb, "</table>");
+
+        g_list_free (l_tasks);
 
     }
 

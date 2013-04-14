@@ -141,18 +141,9 @@ gboolean client_pool_get_client (ClientPool *pool, ClientPool_on_client_ready on
     return TRUE;
 }
 
-// Add request to request queue
-void client_pool_add_request (ClientPool *pool, 
-    ClientPool_on_request_done on_request_done, gpointer callback_data)
-{
-
-}
-
-
 GList *client_pool_get_task_list (ClientPool *pool, GList *l_tasks, const gchar *pool_name)
 {
     GList *l;
-    GString *str;
     
     for (l = g_list_first (pool->l_clients); l; l = g_list_next (l)) {
         PoolClient *pc = (PoolClient *) l->data;

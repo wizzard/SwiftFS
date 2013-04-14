@@ -77,7 +77,8 @@ gint uri_get_port (const struct evhttp_uri *uri)
     return port;
 }
 
-static int on_unlink_cb (const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf)
+static int on_unlink_cb (const char *fpath, G_GNUC_UNUSED const struct stat *sb, 
+    G_GNUC_UNUSED int typeflag, G_GNUC_UNUSED struct FTW *ftwbuf)
 {
     int rv = remove (fpath);
 
@@ -120,7 +121,7 @@ static HostnameValidationResult matches_common_name (const char *hostname, const
 	common_name_str = (char *) ASN1_STRING_data(common_name_asn1);
 
 	// Make sure there isn't an embedded NUL character in the CN
-	if (ASN1_STRING_length(common_name_asn1) != strlen(common_name_str)) {
+	if (ASN1_STRING_length (common_name_asn1) != (int) strlen (common_name_str)) {
 		return MalformedCertificate;
 	}
 
@@ -155,7 +156,7 @@ static HostnameValidationResult matches_subject_alternative_name (const char *ho
 			char *dns_name = (char *) ASN1_STRING_data(current_name->d.dNSName);
 
 			// Make sure there isn't an embedded NUL character in the DNS name
-			if (ASN1_STRING_length(current_name->d.dNSName) != strlen(dns_name)) {
+			if (ASN1_STRING_length (current_name->d.dNSName) != (int) strlen (dns_name)) {
 				result = MalformedCertificate;
 				break;
 			}
@@ -192,12 +193,13 @@ const gchar *timeval_to_str (struct timeval *tv)
 {
     time_t nowtime;
     struct tm *nowtm;
-    char tmbuf[64], buf[64];
+    char tmbuf[64] = {0};
+    static char buf[64] = {0};
 
     nowtime = tv->tv_sec;
     nowtm = localtime (&nowtime);
     strftime (tmbuf, sizeof tmbuf, "%H:%M:%S", nowtm);
-    snprintf (buf, sizeof buf, "%s.%06d", tmbuf, tv->tv_usec);
+    snprintf (buf, sizeof buf, "%s.%06d", tmbuf, (int)tv->tv_usec);
 
     return buf;
 }

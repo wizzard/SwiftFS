@@ -328,9 +328,6 @@ static void application_on_connection_client_cb (gpointer client, gpointer ctx)
 
 static void application_destroy (Application *app)
 {
-    // destroy Fuse
-    if (app->hfs_fuse)
-        hfs_fuse_destroy (app->hfs_fuse);
 
     if (app->read_client_pool)
         client_pool_destroy (app->read_client_pool);
@@ -357,8 +354,15 @@ static void application_destroy (Application *app)
     if (app->auth_client)
         auth_client_destroy (app->auth_client);
 
+    // destroy Fuse
+    if (app->hfs_fuse)
+        hfs_fuse_destroy (app->hfs_fuse);
+
     evdns_base_free (app->dns_base, 0);
     event_base_free (app->evbase);
+
+    if (app->ssl_ctx)
+        SSL_CTX_free (app->ssl_ctx);
 
     g_free (app->mountpoint);
     g_free (app->container_name);
@@ -416,7 +420,6 @@ int main (int argc, char *argv[])
     GOptionContext *context;
     gchar **s_params = NULL;
     gchar **s_config = NULL;
-    gchar *progname;
     gboolean foreground = FALSE;
     gchar conf_str[1023];
     gchar *conf_path;
@@ -464,11 +467,6 @@ int main (int argc, char *argv[])
         return 1;
     }
     g_random_set_seed (time (NULL));
-
-    progname = argv[0];
-
-#warning "XXX"
-    event_enable_debug_mode ();
 
     // init main app structure
     app = g_new0 (Application, 1);

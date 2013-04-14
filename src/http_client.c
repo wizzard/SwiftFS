@@ -4,6 +4,7 @@
  */
 #include "http_client.h"
 #include "auth_client.h"
+#include "hfs_stats_srv.h"
 
 /*{{{ declaration */
 
@@ -87,6 +88,7 @@ typedef struct {
 } HttpClientHeader;
 
 #define HTTP_LOG "http"
+#define IDLE "idle"
 
 static void http_client_read_cb (struct bufferevent *bev, void *ctx);
 static void http_client_write_cb (struct bufferevent *bev, void *ctx);
@@ -130,10 +132,12 @@ gpointer http_client_create (Application *app)
     http->l_input_headers = NULL;
     http->l_output_headers = NULL;
 
-    http->s_status = g_strdup ("idle");
+    http->s_status = g_strdup (IDLE);
+    timeval_zero (&http->start_tv);
+
     http->auth_token = NULL;
 
-    http_client_request_reset (http);
+    http_client_request_reset (http, TRUE);
 
     return (gpointer) http;
 }
@@ -157,19 +161,23 @@ void http_client_destroy (gpointer data)
         g_free (http->response_code_line);
     if (http->auth_token)
         g_free (http->auth_token);
+    if (http->s_status)
+        g_free (http->s_status);
     g_free (http->url);
     g_free (http);
 }
 
 // resets all http request values, 
 // set initial request state
-void http_client_request_reset (HttpClient *http)
+void http_client_request_reset (HttpClient *http, gboolean free_output_headers)
 {   
     http->response_state = R_expected_first_line;
 
-    if (http->l_output_headers)
-        http_client_free_headers (http->l_output_headers);
-    http->l_output_headers = NULL;
+    if (free_output_headers) {
+        if (http->l_output_headers)
+            http_client_free_headers (http->l_output_headers);
+        http->l_output_headers = NULL;
+    }
 
     if (http->l_input_headers)
         http_client_free_headers (http->l_input_headers);
@@ -201,10 +209,10 @@ void http_client_request_reset (HttpClient *http)
 /*{{{ bufferevent callback functions*/
 
 // outgoing data buffer is sent
-static void http_client_write_cb (struct bufferevent *bev, void *ctx)
+static void http_client_write_cb (G_GNUC_UNUSED struct bufferevent *bev, G_GNUC_UNUSED void *ctx)
 {
-    HttpClient *http = (HttpClient *) ctx;
-    LOG_debug (HTTP_LOG, "Data sent !");
+    //HttpClient *http = (HttpClient *) ctx;
+    //LOG_debug (HTTP_LOG, "Data sent !");
 }
 
 // parse the first HTTP response line
@@ -328,7 +336,6 @@ static void http_client_read_cb (struct bufferevent *bev, void *ctx)
 {
     HttpClient *http = (HttpClient *) ctx;
     struct evbuffer *in_buf;
-    gboolean success;
 
     in_buf = bufferevent_get_input (bev);
     
@@ -352,7 +359,7 @@ static void http_client_read_cb (struct bufferevent *bev, void *ctx)
             return;
         }
 
-        LOG_debug (HTTP_LOG, "ALL headers received !");
+        // LOG_debug (HTTP_LOG, "ALL headers received !");
         http->response_state = R_expected_data;
     }
 
@@ -365,21 +372,40 @@ static void http_client_read_cb (struct bufferevent *bev, void *ctx)
 
         // request is fully downloaded
         if (http->input_read >= http->input_length) {
+            HfsStatsSrv *stats;
+
             LOG_debug (HTTP_LOG, "DONE downloading last chunk, in buf size: %zd !", evbuffer_get_length (http->input_buffer));
+
+
+            stats = application_get_stats_srv (http->app);
+            if (stats) {
+                hfs_stats_srv_set_storage_srv_status (stats, http->response_code, http->response_code_line);
+
+                hfs_stats_srv_add_up_bytes (stats, http->upload_bytes);
+            }
+
+            if (http->s_status)
+                g_free (http->s_status);
+            http->s_status = g_strdup (IDLE);
+            timeval_zero (&http->start_tv);
+            http->upload_bytes = 0;
+
 
             // inform client that a end of data is received
             if (http->on_last_chunk_cb)
                 http->on_last_chunk_cb (http, http->input_buffer, http_client_is_response_code_ok (http), http->cb_ctx);
 
-            http->response_state = R_expected_first_line;
-            // rest
-            http_client_request_reset (http);
+            //XXX:  rest
+            http_client_request_reset (http, TRUE);
+            
+            
             // inform pool client
             // XXX:
             /*
             if (http->on_request_done_pool_cb)
                 http->on_request_done_pool_cb (http, http->pool_cb_ctx);
             */
+
         // only the part of it
         } else {
             // inform client that a part of data is received
@@ -391,11 +417,11 @@ static void http_client_read_cb (struct bufferevent *bev, void *ctx)
 }
 
 // socket event during downloading / uploading
-static void http_client_event_cb (struct bufferevent *bev, short what, void *ctx)
+static void http_client_event_cb (G_GNUC_UNUSED struct bufferevent *bev, short what, void *ctx)
 {
     HttpClient *http = (HttpClient *) ctx;
     
-    LOG_debug (HTTP_LOG, "Disconnection event: %d ! %p", what, http);
+    LOG_debug (HTTP_LOG, "[http: %p] Disconnection event: %d !", http, what);
 
     http->connection_state = C_disconnected;
     // XXX: reset
@@ -610,6 +636,12 @@ static gboolean http_client_send_initial_request (HttpClient *http)
     }
     */
 
+    gettimeofday (&http->start_tv, NULL);
+    http->upload_bytes = http->output_length;
+    if (http->s_status)
+        g_free (http->s_status);
+    http->s_status = g_strdup (http_client_method_to_string (http->method));
+
     out_buf = evbuffer_new ();
 
     // first line
@@ -662,7 +694,6 @@ static gboolean http_client_send_initial_request (HttpClient *http)
     // send it
     bufferevent_write_buffer (http->bev, out_buf);
 
-    // free memory
     evbuffer_free (out_buf);
 
     return TRUE;
@@ -679,7 +710,8 @@ gboolean http_client_start_request_ (HttpClient *http, HttpClientRequestMethod m
         LOG_err (HTTP_LOG, "Failed to parse URL string: %s", url);
         return FALSE;
     }
-    g_free (http->url);
+    if (http->url)
+        g_free (http->url);
     http->url = g_strdup (url);
 
     LOG_debug (HTTP_LOG, "Start Req: %s %s", http->url, evhttp_uri_get_path (http->http_uri));
@@ -688,7 +720,7 @@ gboolean http_client_start_request_ (HttpClient *http, HttpClientRequestMethod m
     if (!http_client_is_connected (http)) {
         http_client_connect (http);
     } else {
-        LOG_err (HTTP_LOG, "Already connected");
+        LOG_debug (HTTP_LOG, "Already connected");
         return http_client_send_initial_request (http);
     }
 
@@ -741,6 +773,8 @@ gboolean http_client_start_request_to_storage_url (HttpClient *http, HttpClientR
 {
     ARequest *req;
 
+    http_client_request_reset (http, FALSE);
+
     req = g_new0 (ARequest, 1);
     req->http = http;
     req->method = method;
@@ -754,6 +788,7 @@ gboolean http_client_start_request_to_storage_url (HttpClient *http, HttpClientR
     if (ctx)
         http_client_set_cb_ctx (http, ctx);
 
+
     auth_client_get_data (application_get_auth_client (http->app), FALSE, http_client_on_auth_data_cb, req);
     
     return TRUE;
@@ -761,6 +796,7 @@ gboolean http_client_start_request_to_storage_url (HttpClient *http, HttpClientR
 
 /*}}}*/
 
+/*{{{*/
 // return TRUE if http client is ready to execute a new request
 gboolean http_client_check_rediness (gpointer client)
 {
@@ -850,4 +886,4 @@ ClientInfo *http_client_get_info (gpointer client)
     
     return info;
 }
-
+/*}}}*/

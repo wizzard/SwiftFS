@@ -27,6 +27,7 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
     //struct tm last_modified;
     gchar *name;
     time_t last_modified = time (NULL);
+    xmlNode *root_element;
 
     xmlctx = xmlCreatePushParserCtxt (NULL, NULL, "", 0, NULL);
     xmlParseChunk (xmlctx, (char *)xml, xml_len, 0);
@@ -41,42 +42,46 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
 
   //  LOG_debug (CON_DIR_LOG, "DIR LIST: =============\n%s\n=============", xml);
 
-    xmlNode *root_element = xmlDocGetRootElement (xmlctx->myDoc);
+    root_element = xmlDocGetRootElement (xmlctx->myDoc);
     for (onode = root_element->children; onode; onode = onode->next) {
+        gboolean is_object;
+        gboolean is_subdir;
+
         if (onode->type != XML_ELEMENT_NODE) continue;
 
-        char is_object = !strcasecmp((const char *)onode->name, "object");
-        char is_container = !strcasecmp((const char *)onode->name, "container");
-        char is_subdir = !strcasecmp((const char *)onode->name, "subdir");
+        is_object = !strcasecmp((const char *)onode->name, "object");
+        is_subdir = !strcasecmp((const char *)onode->name, "subdir");
         
         // file
         if (is_object) {
-            name = NULL;
             off_t size = 0;
+            name = NULL;
 
             for (anode = onode->children; anode; anode = anode->next) {
                 char *content = NULL;
                 
-                for (text_node = anode->children; text_node; text_node = text_node->next)
+                for (text_node = anode->children; text_node; text_node = text_node->next) {
                     if (text_node->type == XML_TEXT_NODE)
                       content = (char *)text_node->content;
+                }
 
-                if (!strcasecmp((const char *)anode->name, "name")) {
+                if (!strcasecmp((const char *)anode->name, "name") && content) {
                     name = g_path_get_basename (content);
                 }
 
-                if (!strcasecmp((const char *)anode->name, "bytes"))
-                    size = strtoll(content, NULL, 10);
+                if (!strcasecmp((const char *)anode->name, "bytes") && content)
+                    size = strtoll (content, NULL, 10);
 
-                if (!strcasecmp((const char *)anode->name, "content_type")) {
+                if (!strcasecmp((const char *)anode->name, "content_type") && content) {
                 }
 
-                if (!strcasecmp((const char *)anode->name, "last_modified")) {
-                    struct tm tmp;
+                if (!strcasecmp((const char *)anode->name, "last_modified") && content) {
+                    struct tm tmp = {0};
                     strptime (content, "%FT%T", &tmp);
-                    last_modified = mktime(&tmp);
+                    last_modified = mktime (&tmp);
                 }
             }
+
             if (name) {
                 LOG_debug (CON_DIR_LOG, ">> got file entry: %s %zu", name, size);
                 dir_tree_update_entry (dir_list->dir_tree, dir_list->dir_path, DET_file, dir_list->ino, name, size, last_modified);
@@ -91,12 +96,15 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
             for (anode = onode->children; anode; anode = anode->next) {
                 char *content = NULL;
                 
-                for (text_node = anode->children; text_node; text_node = text_node->next)
+                for (text_node = anode->children; text_node; text_node = text_node->next) {
                     if (text_node->type == XML_TEXT_NODE)
                       content = (char *)text_node->content;
-                if (!strcasecmp((const char *)anode->name, "name")) {
+                }
+
+                if (!strcasecmp((const char *)anode->name, "name") && content) {
                     name = g_path_get_basename (content);
                 }
+
             }
 
             if (name) {
@@ -115,6 +123,12 @@ static gboolean parse_dir_xml (DirListRequest *dir_list, const char *xml, size_t
     return TRUE;
 }
 
+static void dir_req_free (DirListRequest *dir_req)
+{
+    g_free (dir_req->dir_path);
+    g_free (dir_req);
+}
+
 // error, return error to fuse 
 static void http_connection_on_directory_listing_error (HttpConnection *con, void *ctx)
 {
@@ -131,13 +145,13 @@ static void http_connection_on_directory_listing_error (HttpConnection *con, voi
     // release HTTP client
     http_connection_release (con);
     
-    g_free (dir_req);
+    dir_req_free (dir_req);
 }
 
 // Directory read callback function
 static void http_connection_on_directory_listing_data (HttpConnection *con, void *ctx, 
     const gchar *buf, size_t buf_len, 
-    struct evkeyvalq *headers, gboolean success)
+    G_GNUC_UNUSED struct evkeyvalq *headers, gboolean success)
 {   
     DirListRequest *dir_req = (DirListRequest *) ctx;
     const gchar *next_marker = FALSE;
@@ -156,7 +170,7 @@ static void http_connection_on_directory_listing_data (HttpConnection *con, void
         // release HTTP client
         http_connection_release (con);
 
-        g_free (dir_req);
+        dir_req_free (dir_req);
         
         return;
     }
@@ -174,7 +188,7 @@ static void http_connection_on_directory_listing_data (HttpConnection *con, void
         // release HTTP client
         http_connection_release (con);
 
-        g_free (dir_req);
+        dir_req_free (dir_req);
         return;
     }
 
@@ -191,7 +205,7 @@ static void http_connection_on_directory_listing_data (HttpConnection *con, void
         // release HTTP client
         http_connection_release (con);
 
-        g_free (dir_req);
+        dir_req_free (dir_req);
         return;
     }
 
@@ -260,7 +274,7 @@ gboolean http_connection_get_directory_listing (HttpConnection *con, const gchar
     if (!res) {
         LOG_err (CON_DIR_LOG, "Failed to create HTTP request !");
         http_connection_on_directory_listing_error (con, (void *) dir_req);
-
+        dir_req_free (dir_req);
         return FALSE;
     }
 

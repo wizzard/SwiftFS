@@ -107,6 +107,7 @@ static void dir_entry_destroy (gpointer data)
         g_hash_table_destroy (en->h_dir_tree);
     if (en->dir_cache)
         g_free (en->dir_cache);
+    en->dir_cache = NULL;
     g_free (en->basename);
     g_free (en->fullpath);
     g_free (en);
@@ -191,7 +192,7 @@ static DirEntry *dir_tree_add_entry (DirTree *dtree, const gchar *basename, mode
 }
 
 // increase the age of directory
-void dir_tree_start_update (DirTree *dtree, const gchar *dir_path)
+void dir_tree_start_update (DirTree *dtree, G_GNUC_UNUSED const gchar *dir_path)
 {
     //XXX: per directory ?
     dtree->current_age++;
@@ -239,7 +240,7 @@ void dir_tree_stop_update (DirTree *dtree, fuse_ino_t parent_ino)
     g_hash_table_foreach_remove (parent_en->h_dir_tree, dir_tree_stop_update_on_remove_child_cb, dtree);
 }
 
-DirEntry *dir_tree_update_entry (DirTree *dtree, const gchar *path, DirEntryType type, 
+DirEntry *dir_tree_update_entry (DirTree *dtree, G_GNUC_UNUSED const gchar *path, DirEntryType type, 
     fuse_ino_t parent_ino, const gchar *entry_name, long long size, time_t last_modified)
 {
     DirEntry *parent_en;
@@ -353,8 +354,10 @@ void dir_tree_fill_on_dir_buf_cb (gpointer callback_data, gboolean success)
             if (tmp_en->age >= dir_fill_data->dtree->current_age)
                 hfs_fuse_add_dirbuf (dir_fill_data->req, &b, tmp_en->basename, tmp_en->ino, tmp_en->size);
         }
+
         if (dir_fill_data->en->dir_cache)
             g_free (dir_fill_data->en->dir_cache);
+        dir_fill_data->en->dir_cache = NULL;
 
         // done, save as cache
         dir_fill_data->en->dir_cache_size = b.size;
@@ -421,6 +424,7 @@ void dir_tree_fill_dir_buf (DirTree *dtree,
     // reset dir cache
     if (en->dir_cache)
         g_free (en->dir_cache);
+    en->dir_cache = NULL;
     en->dir_cache_size = 0;
     en->dir_cache_created = 0;
 
@@ -456,12 +460,12 @@ typedef struct {
 } LookupOpData;
 
 static void dir_tree_lookup_on_attr_cb (HttpConnection *con, void *ctx, 
-    const gchar *buf, size_t buf_len, 
+    G_GNUC_UNUSED const gchar *buf, G_GNUC_UNUSED size_t buf_len, 
     struct evkeyvalq *headers, gboolean success)
 {
     LookupOpData *op_data = (LookupOpData *) ctx;
-    const unsigned char *size_header;
-    const unsigned char *meta_header;
+    const char *size_header;
+    const char *meta_header;
     DirEntry  *en;
     
     LOG_debug (DIR_TREE_LOG, "Got attributes for ino: %"INO_FMT, op_data->ino);
@@ -554,13 +558,13 @@ static void dir_tree_lookup_on_con_cb (gpointer client, gpointer ctx)
 }
 
 static void dir_tree_lookup_on_not_found_data_cb (HttpConnection *con, void *ctx, 
-    const gchar *buf, size_t buf_len, 
+    G_GNUC_UNUSED const gchar *buf, G_GNUC_UNUSED size_t buf_len, 
     struct evkeyvalq *headers, gboolean success)
 {
     LookupOpData *op_data = (LookupOpData *) ctx;
-    const unsigned char *size_header;
-    const unsigned char *meta_header;
-    const unsigned char *last_modified_header;
+    const char *size_header;
+    const char *meta_header;
+    const char *last_modified_header;
     DirEntry *en;
     time_t last_modified = time (NULL);
     DirEntry *parent_en;
@@ -802,11 +806,11 @@ typedef struct {
 } GetAttrOpData;
 
 static void dir_tree_getattr_on_attr_cb (HttpConnection *con, void *ctx, 
-    const gchar *buf, size_t buf_len, 
+    G_GNUC_UNUSED const gchar *buf, G_GNUC_UNUSED size_t buf_len, 
     struct evkeyvalq *headers, gboolean success)
 {
     GetAttrOpData *op_data = (GetAttrOpData *) ctx;
-    const unsigned char *size_header;
+    const char *size_header;
     DirEntry  *en;
     
 
@@ -944,8 +948,9 @@ void dir_tree_getattr (DirTree *dtree, fuse_ino_t ino,
 // set entry's attributes
 // update directory cache
 void dir_tree_setattr (DirTree *dtree, fuse_ino_t ino, 
-    struct stat *attr, int to_set,
-    dir_tree_setattr_cb setattr_cb, fuse_req_t req, void *fi)
+    G_GNUC_UNUSED struct stat *attr, G_GNUC_UNUSED int to_set,
+    dir_tree_setattr_cb setattr_cb, fuse_req_t req, 
+    G_GNUC_UNUSED void *fi)
 {
     DirEntry  *en;
     
@@ -1085,7 +1090,6 @@ void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino,
     struct fuse_file_info *fi)
 {
     DirEntry *en;
-    char full_name[1024];
     HfsFileOp *fop;
     FileReadOpData *op_data;
     
@@ -1101,7 +1105,7 @@ void dir_tree_file_read (DirTree *dtree, fuse_ino_t ino,
     
     fop = (HfsFileOp *) fi->fh;
 
-    LOG_debug (DIR_TREE_LOG, "[fop: %p] read inode %"INO_FMT", size: %zd, off: %"OFF_FMT, fop, ino, size, off);
+    // LOG_debug (DIR_TREE_LOG, "[fop: %p] read inode %"INO_FMT", size: %zd, off: %"OFF_FMT, fop, ino, size, off);
     
     op_data = g_new0 (FileReadOpData, 1);
     op_data->file_read_cb = file_read_cb;
@@ -1120,13 +1124,13 @@ typedef struct {
 } FileWriteOpData;
 
 // buffer is written into local file, or error
-static void dir_tree_on_buffer_written_cb (HfsFileOp *fop, gpointer ctx, gboolean success, size_t count)
+static void dir_tree_on_buffer_written_cb (G_GNUC_UNUSED HfsFileOp *fop, gpointer ctx, gboolean success, size_t count)
 {
     FileWriteOpData *op_data = (FileWriteOpData *) ctx;
 
+    // LOG_debug (DIR_TREE_LOG, "[fop: %p op: %p] buffer written, count: %zu", fop, op_data, count);
+    
     op_data->file_write_cb (op_data->req, success, count);
-
-    // LOG_debug (DIR_TREE_LOG, "[fop: %p] buffer written, count: %zu", fop, count);
     
     g_free (op_data);
 }
@@ -1153,11 +1157,12 @@ void dir_tree_file_write (DirTree *dtree, fuse_ino_t ino,
     
     fop = (HfsFileOp *) fi->fh;
     
-    // LOG_debug (DIR_TREE_LOG, "[fop: %p] write inode %"INO_FMT", size: %zd, off: %"OFF_FMT, fop, ino, size, off);
 
     op_data = g_new0 (FileWriteOpData, 1);
     op_data->file_write_cb = file_write_cb;
     op_data->req = req;
+    
+    // LOG_debug (DIR_TREE_LOG, "[fop: %p op: %p] write inode %"INO_FMT", size: %zd, off: %"OFF_FMT, fop, op_data, ino, size, off);
 
     hfs_fileop_write_buffer (fop, buf, size, off, ino, dir_tree_on_buffer_written_cb, op_data);
 }
@@ -1177,7 +1182,8 @@ typedef struct {
 
 // file is removed
 static void dir_tree_file_remove_on_con_data_cb (HttpConnection *con, gpointer ctx, 
-        const gchar *buf, size_t buf_len, G_GNUC_UNUSED struct evkeyvalq *headers, gboolean success)
+    G_GNUC_UNUSED const gchar *buf, G_GNUC_UNUSED size_t buf_len,
+    G_GNUC_UNUSED struct evkeyvalq *headers, gboolean success)
 {
     FileRemoveData *data = (FileRemoveData *) ctx;
     
@@ -1270,7 +1276,7 @@ void dir_tree_file_remove (DirTree *dtree, fuse_ino_t ino, DirTree_file_remove_c
 void dir_tree_file_unlink (DirTree *dtree, fuse_ino_t parent_ino, const char *name, DirTree_file_remove_cb file_remove_cb, fuse_req_t req)
 {
     DirEntry *en, *parent_en;
-    FileRemoveData *data;
+    //FileRemoveData *data;
     
     LOG_debug (DIR_TREE_LOG, "Unlinking %s", name);
 
@@ -1309,9 +1315,13 @@ static void dir_tree_dir_remove_try_to_remove_object (HttpConnection *con, DirRe
 
 // object is removed, call remove function again
 static void dir_tree_dir_remove_on_object_removed_cb (HttpConnection *con, gpointer ctx, 
-        const gchar *buf, size_t buf_len, G_GNUC_UNUSED struct evkeyvalq *headers, gboolean success)
+    G_GNUC_UNUSED const gchar *buf, G_GNUC_UNUSED size_t buf_len, 
+    G_GNUC_UNUSED struct evkeyvalq *headers, gboolean success)
 {
     DirRemoveData *data = (DirRemoveData *) ctx;
+
+    if (!success)
+        LOG_err (DIR_TREE_LOG, "Failed to remove object !");
 
     dir_tree_dir_remove_try_to_remove_object (con, data);
 }

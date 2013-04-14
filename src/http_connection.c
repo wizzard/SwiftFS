@@ -185,7 +185,7 @@ static void http_connection_on_close (struct evhttp_connection *evcon, void *ctx
 {
     HttpConnection *con = (HttpConnection *) ctx;
 
-    LOG_debug (CON_LOG, "XXXXXXXXXXXXX [%p] Connection closed !", con);
+    LOG_debug (CON_LOG, "[evcon: %p con: %p] Connection closed !", evcon, con);
 
     con->evcon = NULL;
 }
@@ -232,13 +232,11 @@ static void http_connection_on_response_cb (struct evhttp_request *req, void *ct
     }
 
     stats = application_get_stats_srv (data->con->app);
-    /*
     if (stats) {
         hfs_stats_srv_set_storage_srv_status (stats, evhttp_request_get_response_code (req), req->response_code_line);
 
         hfs_stats_srv_add_up_bytes (data->con->stats_srv, data->con->upload_bytes);
     }
-    */
     data->con->upload_bytes = 0;
 
     // XXX: handle redirect
