@@ -58,24 +58,24 @@ hydrafs [http://auth.api.yourcloud.com/v1.0] [options] [container] [mountpoint]
 ```
 
 Where options are:
-
+```
 -v: Verbose output
 -f: Do not daemonize process
 -c path:  Path to configuration file
 -o [opts]: FUSE options, see FUSE manpage
-
+```
 Configuration file
 ------------------
     
-Configuration file (```hydrafs.conf```) is located in $(prefix)/etc directory.
+Configuration file (```hydrafs.conf```) is located in ```$(prefix)/etc``` directory.
 
 Bug reporting
 -------------
     
 Please include version of hydrafs and libraries by running:
-
+```
 hydrafs --version
-
+```
 
 Certificates
 -------------
