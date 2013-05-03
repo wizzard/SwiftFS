@@ -29,30 +29,35 @@ To install libevent 2.1.2 development version:
 * download latest 2.1.x sources from http://libevent.org/
 * extract archive
 * configure to install it into /opt/libevent2.1 folder:
-    ./configure --prefix=/opt/libevent2.1/ --enable-openssl
-* make && make install
+```
+./configure --prefix=/opt/libevent2.1/ --enable-openssl
+make && make install
+```
 
 
 How to build HydraFS
 ------------------
 
+(if sources are from GitHub): ```sh autogen.sh```
+```
 PKG_CONFIG_PATH=/opt/libevent2.1/lib/pkgconfig ./configure
 make
 make install
+```
 
-
-Provide configure script with --enable-debug-mode flag if you want to get a debug build.
+Provide configure script with ```--enable-debug-mode``` flag if you want to get a debug build.
+Provide ```--enable-test-apps``` flag if you want to build test applications.
 
 How to start using HydraFS
 ------------------------
-
+```
 export HydraFS_USER="Swift username"
 export HydraFS_PWD="Swift password"
 
 hydrafs [http://auth.api.yourcloud.com/v1.0] [options] [container] [mountpoint]
+```
 
-
-Where options could be:
+Where options are:
 
 -v: Verbose output
 -f: Do not daemonize process
@@ -62,7 +67,7 @@ Where options could be:
 Configuration file
 ------------------
     
-Configuration file (hydrafs.conf) is located in $(prefix)/etc directory.
+Configuration file (```hydrafs.conf```) is located in $(prefix)/etc directory.
 
 Bug reporting
 -------------
@@ -78,7 +83,9 @@ Certificates
 In order to use HTTPS you need to prepare a PEM certificate, which contains all trusted CA certificates.
 For example, if you have 2 different .pem certificates (or .crt), perform the following action:
 
+```
 cat 1.pem >> out.pem
 cat 2.pem >> out.pem
+```
 
 and set path to out.pem in "conenction.ssl_ca_cert" section of configuration file.
