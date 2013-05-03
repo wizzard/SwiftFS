@@ -1,4 +1,13 @@
-HydraFS is a userspace filesystem to mount OpenStack container.
+HydraFS is a userspace filesystem to mount OpenStack container stored in Swift.
+
+Features
+--------
+
+* high I/O operations speed
+* encryption / decryption
+* caching
+* multipart parallel upload
+* readahead download
 
 Requirements
 ------------
@@ -29,7 +38,7 @@ How to build HydraFS
 
 PKG_CONFIG_PATH=/opt/libevent2.1/lib/pkgconfig ./configure
 make
-#make install
+make install
 
 
 Provide configure script with --enable-debug-mode flag if you want to get a debug build.
@@ -40,7 +49,7 @@ How to start using HydraFS
 export HydraFS_USER="Swift username"
 export HydraFS_PWD="Swift password"
 
-./hydrafs.sh [http://auth.api.yourcloud.com/v1.0] [container] [options] [mountpoint]
+hydrafs [http://auth.api.yourcloud.com/v1.0] [options] [container] [mountpoint]
 
 
 Where options could be:
