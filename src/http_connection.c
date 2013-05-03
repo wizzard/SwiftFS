@@ -1,7 +1,18 @@
-/* Copyright (C) 2012-2013 Paul Ionkin <paul.ionkin@gmail.com>
- * This file is subject to the terms and conditions defined in
- * file 'LICENSE.txt', which is part of this source code package.
- */
+/*  
+ * Copyright 2012-2013 Paul Ionkin <paul.ionkin@gmail.com>
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+*/
 #include "http_connection.h"
 #include "auth_client.h"
 #include "hfs_stats_srv.h"
@@ -88,14 +99,14 @@ static gboolean http_connection_connect (HttpConnection *con, const gchar *stora
     if (uri_is_https (uri)) {
         SSL *ssl;
 
-		ssl = SSL_new (application_get_ssl_ctx (con->app));
+        ssl = SSL_new (application_get_ssl_ctx (con->app));
 
-		bev = bufferevent_openssl_socket_new (
+        bev = bufferevent_openssl_socket_new (
             application_get_evbase (con->app), 
             -1,
             ssl,
-		    BUFFEREVENT_SSL_CONNECTING,
-		    BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS
+            BUFFEREVENT_SSL_CONNECTING,
+            BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS
         );
 
         // LOG_err (CON_LOG, "Using SSL !");

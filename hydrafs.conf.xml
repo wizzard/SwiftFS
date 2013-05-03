@@ -5,8 +5,8 @@
 
 <pool>
     <!-- number of concurrent connections for each type of operation -->
-    <writers type="int">3</writers>
-    <readers type="int">2</readers>
+    <writers type="int">5</writers>
+    <readers type="int">4</readers>
     <!-- number of concurrent connections other operations, 
     such as directory listing, object deleting, etc -->
     <operations type="int">4</operations>
@@ -61,6 +61,10 @@
     <cache_object_ttl type="uint">600</cache_object_ttl>
     <!-- how often check cached objects for expiration, 1 min -->
     <cache_check_secs type="uint">60</cache_check_secs>
+    <!-- the max number of parallel downloads streams per file, must me <= number of "pool.writers" -->
+    <parallel_downloads type="uint">3</parallel_downloads>
+    <!-- the max number of readahead streams per file, must me <= number of "pool.reads" -->
+    <readahead_uploads type="uint">3</readahead_uploads>
     <!-- segment size for upload / download files (5mb)  
     <segment_size type="uint">1024</segment_size> -->
     <!-- segment size for upload / download files (10mb)  -->
