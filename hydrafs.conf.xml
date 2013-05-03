@@ -31,7 +31,7 @@
     -->
     <ssl_ca_cert type="string">crt/trust.pem</ssl_ca_cert>
     <!-- the server's identity in the server's certificate -->
-    <ssl_hostname type="string">no.swift.hydracloud.com</ssl_hostname>
+    <ssl_hostname type="string">your.swift.cloud.com</ssl_hostname>
 </connection>
 
 <auth>
