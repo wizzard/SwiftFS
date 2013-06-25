@@ -1,4 +1,4 @@
-HydraFS is a userspace filesystem to mount OpenStack container stored in Swift.
+SwiftFS is a userspace filesystem to mount OpenStack container stored in Swift.
 
 Features
 --------
@@ -35,7 +35,7 @@ make && make install
 ```
 
 
-How to build HydraFS
+How to build SwiftFS
 ------------------
 
 (if sources are from GitHub): ```sh autogen.sh```
@@ -48,7 +48,7 @@ make install
 Provide configure script with ```--enable-debug-mode``` flag if you want to get a debug build.
 Provide ```--enable-test-apps``` flag if you want to build test applications.
 
-How to start using HydraFS
+How to start using SwiftFS
 ------------------------
 ```
 export HydraFS_USER="Swift username"
