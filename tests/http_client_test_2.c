@@ -1,4 +1,4 @@
-/*  
+/*
  * Copyright 2012-2013 Paul Ionkin <paul.ionkin@gmail.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +30,7 @@ typedef struct {
     gchar *in_name;
     gchar *md5;
     gint id;
-    
+
     gchar *out_name;
     FILE *fout;
 
@@ -89,7 +89,7 @@ static GList *populate_file_list (gint max_files, GList *l_files, gchar *in_dir)
         bytes = g_malloc (bytes_len + 1);
         RAND_pseudo_bytes ((unsigned char *)bytes, bytes_len);
         *(bytes + bytes_len) = '\0';
-        
+
         name = get_random_string (15, TRUE);
         fdata->in_name = g_strdup_printf ("%s/%s", in_dir, name);
         f = fopen (fdata->in_name, "w");
@@ -98,14 +98,14 @@ static GList *populate_file_list (gint max_files, GList *l_files, gchar *in_dir)
 
         fdata->out_name = g_strdup_printf ("%s/%s", out_dir, name);
         fdata->md5 = get_md5_sum (bytes, bytes_len + 1);
-        
+
         fdata->fout = fopen (fdata->out_name, "w");
         g_assert (fdata->fout);
 
         LOG_debug (HTTP_TEST, "%s -> %s, size: %u", fdata->in_name, fdata->md5, bytes_len);
 
         g_free (bytes);
-        
+
         g_free (name);
         l_files = g_list_append (l_files, fdata);
     }
@@ -118,7 +118,7 @@ static GList *populate_file_list (gint max_files, GList *l_files, gchar *in_dir)
 gboolean check_list (GList *l)
 {
     GList *tmp;
-    
+
     for (tmp = g_list_first (l); tmp; tmp = g_list_next (tmp)) {
         FileData *fdata = (FileData *) tmp->data;
         if (!fdata->checked)
@@ -146,7 +146,7 @@ static void on_last_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpoi
     g_assert (fwrite (buf, 1, buf_len, fdata->fout) == buf_len);
 
     evbuffer_drain (input_buf, buf_len);
-    
+
     // close output file
     fclose (fdata->fout);
 
@@ -194,7 +194,7 @@ static void on_chunk_cb (HttpClient *http, struct evbuffer *input_buf, gpointer 
     g_assert (fwrite (buf, 1, buf_len, fdata->fout) == buf_len);
 
     evbuffer_drain (input_buf, buf_len);
-    
+
 }
 
 static void send_request (FileData *fdata)
@@ -290,7 +290,7 @@ static void on_srv_auth_request (struct evhttp_request *req, void *ctx)
 static void on_srv_gen_request (struct evhttp_request *req, void *ctx)
 {
 	const char *uri = evhttp_request_get_uri(req);
-    
+
     if (!strstr (uri, "/storage/")) {
         LOG_debug (HTTP_TEST, "%s", uri);
         g_assert_not_reached ();
@@ -393,9 +393,9 @@ int main (int argc, char *argv[])
 
         app->conf = conf_create ();
         conf_add_boolean (app->conf, "log.use_syslog", TRUE);
-        
+
         conf_add_uint (app->conf, "auth.ttl", 85800);
-        
+
         conf_add_int (app->conf, "pool.writers", 2);
         conf_add_int (app->conf, "pool.readers", 2);
         conf_add_int (app->conf, "pool.operations", 4);
@@ -406,7 +406,7 @@ int main (int argc, char *argv[])
 
         conf_add_uint (app->conf, "filesystem.dir_cache_max_time", 5);
         conf_add_boolean (app->conf, "filesystem.cache_enabled", TRUE);
-        conf_add_string (app->conf, "filesystem.cache_dir", "/tmp/hydrafs");
+        conf_add_string (app->conf, "filesystem.cache_dir", "/tmp/swiftfs");
         conf_add_string (app->conf, "filesystem.cache_dir_max_size", "1Gb");
 
         conf_add_boolean (app->conf, "statistics.enabled", TRUE);
@@ -425,10 +425,10 @@ int main (int argc, char *argv[])
 
     // start server
     start_srv (app->evbase, in_dir);
-    
+
     cb = g_new (CBData, 1);
     cb->l_files = l_files;
-    
+
     app->timeout = evtimer_new (app->evbase, on_output_timer, cb);
 
     evutil_timerclear(&tv);
@@ -440,7 +440,7 @@ int main (int argc, char *argv[])
 
     for (tmp = g_list_first (l_files); tmp; tmp = g_list_next (tmp)) {
         FileData *fdata = (FileData *) tmp->data;
-        
+
         g_free (fdata->in_name);
         g_free (fdata->md5);
         g_free (fdata->out_name);

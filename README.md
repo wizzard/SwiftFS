@@ -51,10 +51,10 @@ Provide ```--enable-test-apps``` flag if you want to build test applications.
 How to start using SwiftFS
 ------------------------
 ```
-export HydraFS_USER="Swift username"
-export HydraFS_PWD="Swift password"
+export SwiftFS_USER="Swift username"
+export SwiftFS_PWD="Swift password"
 
-hydrafs [http://auth.api.yourcloud.com/v1.0] [options] [container] [mountpoint]
+swiftfs [http://auth.api.yourcloud.com/v1.0] [options] [container] [mountpoint]
 ```
 
 Where options are:
@@ -66,15 +66,15 @@ Where options are:
 ```
 Configuration file
 ------------------
-    
-Configuration file (```hydrafs.conf```) is located in ```$(prefix)/etc``` directory.
+
+Configuration file (```swiftfs.conf.xml```) is located in ```$(prefix)/etc``` directory.
 
 Bug reporting
 -------------
-    
-Please include version of hydrafs and libraries by running:
+
+Please include version of SwiftFS and libraries by running:
 ```
-hydrafs --version
+swiftfs --version
 ```
 
 Certificates

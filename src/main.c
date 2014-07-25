@@ -1,4 +1,4 @@
-/*  
+/*
  * Copyright 2012-2013 Paul Ionkin <paul.ionkin@gmail.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +30,7 @@ struct _Application {
     ConfData *conf;
     struct event_base *evbase;
     struct evdns_base *dns_base;
-    
+
     HfsFuse *hfs_fuse;
     DirTree *dir_tree;
     CacheMng *cmng;
@@ -176,16 +176,16 @@ static void sigsegv_cb (int sig_num, siginfo_t *info, void * ucontext)
     int size, i;
     sig_ucontext_t *uc;
     FILE *f;
-    
+
     g_fprintf (stderr, "Got Sigfault !\n");
 
 	uc = (sig_ucontext_t *)ucontext;
 
     /* Get the address at the time the signal was raised from the EIP (x86) */
 #ifdef __i386__
-    caller_address = (void *) uc->uc_mcontext.eip;   
+    caller_address = (void *) uc->uc_mcontext.eip;
 #else
-    caller_address = (void *) uc->uc_mcontext.rip;   
+    caller_address = (void *) uc->uc_mcontext.rip;
 #endif
 
 	f = stderr;
@@ -229,7 +229,7 @@ static void sigusr1_cb (G_GNUC_UNUSED evutil_socket_t sig, G_GNUC_UNUSED short e
     // try to unmount FUSE mountpoint
     if (_app && _app->hfs_fuse)
         hfs_fuse_destroy (_app->hfs_fuse);
-    
+
     exit (1);
 }
 
@@ -240,7 +240,7 @@ static void sigint_cb (G_GNUC_UNUSED evutil_socket_t sig, G_GNUC_UNUSED short ev
 
 	LOG_err (APP_LOG, "Got SIGINT");
 
-    // terminate after running all active events 
+    // terminate after running all active events
     event_base_loopexit (app->evbase, NULL);
 }
 /*}}}*/
@@ -309,7 +309,7 @@ static gint application_finish_initialization_and_run (Application *app)
 	app->sigusr1_ev = evsignal_new (app->evbase, SIGUSR1, sigusr1_cb, app);
 	event_add (app->sigusr1_ev, NULL);
 /*}}}*/
-    
+
     if (!app->foreground)
         fuse_daemonize (0);
 
@@ -361,7 +361,7 @@ static void application_destroy (Application *app)
         event_free (app->sigpipe_ev);
     if (app->sigusr1_ev)
         event_free (app->sigusr1_ev);
-    
+
     if (app->auth_client)
         auth_client_destroy (app->auth_client);
 
@@ -384,7 +384,7 @@ static void application_destroy (Application *app)
 
     conf_destroy (app->conf);
     g_free (app);
-    
+
     ENGINE_cleanup ();
     CRYPTO_cleanup_all_ex_data ();
 	ERR_free_strings ();
@@ -444,7 +444,7 @@ int main (int argc, char *argv[])
     guint32 segment_size = 0;
     gchar **s_fuse_opts = NULL;
 
-    conf_path = g_build_filename (SYSCONFDIR, "hydrafs.conf", NULL); 
+    conf_path = g_build_filename (SYSCONFDIR, "swiftfs.conf.xml", NULL);
     g_snprintf (conf_str, sizeof (conf_str), "Path to configuration file. Default: %s", conf_path);
 
     GOptionEntry entries[] = {
@@ -501,7 +501,7 @@ int main (int argc, char *argv[])
     // parse command line options
     context = g_option_context_new ("[http://auth.api.yourcloud.com/v1.0] [container] [mountpoint]");
     g_option_context_add_main_entries (context, entries, NULL);
-    g_option_context_set_description (context, "Please set both HydraFS_USER and HydraFS_PWD environment variables!");
+    g_option_context_set_description (context, "Please set both SwiftFS_USER and SwiftFS_PWD environment variables!");
     if (!g_option_context_parse (context, &argc, &argv, &error)) {
         g_fprintf (stderr, "Failed to parse command line options: %s\n", error->message);
         return FALSE;
@@ -513,8 +513,8 @@ int main (int argc, char *argv[])
         log_level = LOG_msg;
 
     // get access parameters from the environment
-    app->auth_user = getenv ("HydraFS_USER");
-    app->auth_pwd = getenv ("HydraFS_PWD");
+    app->auth_user = getenv ("SwiftFS_USER");
+    app->auth_pwd = getenv ("SwiftFS_PWD");
     if (!app->auth_user || !app->auth_pwd) {
         LOG_err (APP_LOG, "Environment variables are not set!");
         g_fprintf (stdout, "%s\n", g_option_context_get_help (context, TRUE, NULL));
@@ -541,7 +541,7 @@ int main (int argc, char *argv[])
     }
 
     app->container_name = g_strdup (s_params[1]);
-    
+
     app->mountpoint = g_strdup (s_params[2]);
 
     // check if directory exists
@@ -556,11 +556,11 @@ int main (int argc, char *argv[])
         g_fprintf (stdout, "%s\n", g_option_context_get_help (context, TRUE, NULL));
         return -1;
     }
-    
+
     g_strfreev (s_params);
 
     app->foreground = foreground;
-    
+
     g_option_context_free (context);
 /*}}}*/
 
@@ -580,11 +580,11 @@ int main (int argc, char *argv[])
         // set default values
         if (!version)
             LOG_msg (APP_LOG, "Configuration file not found, using default settings.");
-        
+
         conf_add_boolean (app->conf, "log.use_syslog", FALSE);
-        
+
         conf_add_uint (app->conf, "auth.ttl", 85800);
-        
+
         conf_add_int (app->conf, "pool.writers", 2);
         conf_add_int (app->conf, "pool.readers", 2);
         conf_add_int (app->conf, "pool.operations", 4);
@@ -596,7 +596,7 @@ int main (int argc, char *argv[])
         conf_add_uint (app->conf, "filesystem.dir_cache_max_time", 5);
         conf_add_boolean (app->conf, "filesystem.cache_enabled", TRUE);
         conf_add_boolean (app->conf, "filesystem.md5_enabled", FALSE);
-        conf_add_string (app->conf, "filesystem.cache_dir", "/tmp/hydrafs");
+        conf_add_string (app->conf, "filesystem.cache_dir", "/tmp/swiftfs");
         conf_add_string (app->conf, "filesystem.cache_dir_max_size", "1Gb");
         conf_add_uint (app->conf, "filesystem.segment_size", 5242880); // 5mb
         conf_add_uint (app->conf, "filesystem.cache_object_ttl", 600); // 10 min
@@ -619,11 +619,11 @@ int main (int argc, char *argv[])
 
     // check if --version is specified
     if (version) {
-            g_fprintf (stdout, "HydraFS File System v%s\n", VERSION);
+            g_fprintf (stdout, "SwiftFS File System v%s\n", VERSION);
             g_fprintf (stdout, "Copyright (C) 2012-2013 Paul Ionkin <paul.ionkin@gmail.com>\n");
             g_fprintf (stdout, "\nLibraries:\n");
-            g_fprintf (stdout, " GLib: %d.%d.%d   libevent: %s  fuse: %d.%d  glibc: %s\n", 
-                    GLIB_MAJOR_VERSION, GLIB_MINOR_VERSION, GLIB_MICRO_VERSION, 
+            g_fprintf (stdout, " GLib: %d.%d.%d   libevent: %s  fuse: %d.%d  glibc: %s\n",
+                    GLIB_MAJOR_VERSION, GLIB_MINOR_VERSION, GLIB_MICRO_VERSION,
                     LIBEVENT_VERSION,
                     FUSE_MAJOR_VERSION, FUSE_MINOR_VERSION,
                     gnu_get_libc_version ()
@@ -674,7 +674,7 @@ int main (int argc, char *argv[])
     }
 
 /*}}}*/
-    
+
     // try to init Encryption
     if (conf_get_boolean (app->conf, "encryption.enabled")) {
         app->enc = hfs_encryption_create (app);
@@ -707,7 +707,7 @@ int main (int argc, char *argv[])
             return -1;
         }
     }
-    
+
     app->auth_client = auth_client_create (app, app->auth_uri);
     if (!app->auth_client) {
         LOG_err (APP_LOG, "Failed to create AuthClient !");

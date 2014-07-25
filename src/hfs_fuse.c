@@ -1,4 +1,4 @@
-/*  
+/*
  * Copyright 2012-2013 Paul Ionkin <paul.ionkin@gmail.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +22,7 @@ struct _HfsFuse {
     Application *app;
     DirTree *dir_tree;
     gchar *mountpoint;
-    
+
     // the session that we use to process the fuse stuff
     struct fuse_session *session;
     struct fuse_chan *chan;
@@ -41,7 +41,7 @@ struct _HfsFuse {
 /*{{{ func declarations */
 static void hfs_fuse_init (void *userdata, struct fuse_conn_info *conn);
 static void hfs_fuse_on_read (evutil_socket_t fd, short what, void *arg);
-static void hfs_fuse_readdir (fuse_req_t req, fuse_ino_t ino, 
+static void hfs_fuse_readdir (fuse_req_t req, fuse_ino_t ino,
     size_t size, off_t off, struct fuse_file_info *fi);
 static void hfs_fuse_lookup (fuse_req_t req, fuse_ino_t parent_ino, const char *name);
 static void hfs_fuse_getattr (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
@@ -91,7 +91,7 @@ HfsFuse *hfs_fuse_new (Application *app, const gchar *mountpoint, const gchar *f
     hfs_fuse->mountpoint = g_strdup (mountpoint);
 
     if (fuse_opts) {
-        if (fuse_opt_add_arg (&args, "hydrafs") == -1) {
+        if (fuse_opt_add_arg (&args, "swiftfs") == -1) {
             LOG_err (FUSE_LOG, "Failed to parse FUSE parameter !");
             return NULL;
         }
@@ -106,7 +106,7 @@ HfsFuse *hfs_fuse_new (Application *app, const gchar *mountpoint, const gchar *f
             return NULL;
         }
     }
-    
+
     if ((hfs_fuse->chan = fuse_mount (hfs_fuse->mountpoint, &args)) == NULL) {
         LOG_err (FUSE_LOG, "Failed to mount FUSE partition !");
         return NULL;
@@ -121,18 +121,18 @@ HfsFuse *hfs_fuse_new (Application *app, const gchar *mountpoint, const gchar *f
         LOG_err (FUSE_LOG, "failed to malloc memory !");
         return NULL;
     }
-    
+
     // allocate a low-level session
     hfs_fuse->session = fuse_lowlevel_new (NULL, &hfs_fuse_opers, sizeof (hfs_fuse_opers), hfs_fuse);
     if (!hfs_fuse->session) {
         LOG_err (FUSE_LOG, "fuse_lowlevel_new");
         return NULL;
     }
-    
+
     fuse_session_add_chan (hfs_fuse->session, hfs_fuse->chan);
 
-    hfs_fuse->ev = event_new (application_get_evbase (app), 
-        fuse_chan_fd (hfs_fuse->chan), EV_READ, &hfs_fuse_on_read, 
+    hfs_fuse->ev = event_new (application_get_evbase (app),
+        fuse_chan_fd (hfs_fuse->chan), EV_READ, &hfs_fuse_on_read,
         hfs_fuse
     );
     if (!hfs_fuse->ev) {
@@ -145,11 +145,11 @@ HfsFuse *hfs_fuse_new (Application *app, const gchar *mountpoint, const gchar *f
         return NULL;
     }
     /*
-    hfs_fuse->ev_timer = evtimer_new (application_get_evbase (app), 
-        &hfs_fuse_on_timer, 
+    hfs_fuse->ev_timer = evtimer_new (application_get_evbase (app),
+        &hfs_fuse_on_timer,
         hfs_fuse
     );
-    
+
     tv.tv_sec = 10;
     tv.tv_usec = 0;
     LOG_err (FUSE_LOG, "event_add");
@@ -217,7 +217,7 @@ static void hfs_fuse_on_read (evutil_socket_t fd, short what, void *arg)
         LOG_err (FUSE_LOG, "No FUSE session !");
         return;
     }
-    
+
     // loop until we complete a recv
     do {
         // a new fuse_req is available
@@ -229,13 +229,13 @@ static void hfs_fuse_on_read (evutil_socket_t fd, short what, void *arg)
 
     if (res < 0 && res != -EAGAIN)
         LOG_err (FUSE_LOG, "fuse_chan_recv failed: %s", strerror(-res));
-    
+
     if (res > 0) {
         // LOG_debug (FUSE_LOG, "got %d bytes from /dev/fuse", res);
 
         fuse_session_process (hfs_fuse->session, hfs_fuse->recv_buf, res, ch);
     }
-    
+
     // reschedule
     if (event_add (hfs_fuse->ev, NULL))
         LOG_err (FUSE_LOG, "event_add");
@@ -254,7 +254,7 @@ void hfs_fuse_add_dirbuf (fuse_req_t req, struct dirbuf *b, const char *name, fu
 {
     struct stat stbuf;
     size_t oldsize = b->size;
-    
+
     LOG_debug (FUSE_LOG, "add_dirbuf  ino: %d, name: %s", ino, name);
 
     // get required buff size
@@ -293,7 +293,7 @@ static void hfs_fuse_readdir (fuse_req_t req, fuse_ino_t ino, size_t size, off_t
     HfsFuse *hfs_fuse = fuse_req_userdata (req);
 
     LOG_debug (FUSE_LOG, "readdir  inode: %"INO_FMT", size: %zd, off: %"OFF_FMT, ino, size, off);
-    
+
     // fill directory buffer for "ino" directory
     dir_tree_fill_dir_buf (hfs_fuse->dir_tree, ino, size, off, hfs_fuse_readdir_cb, req);
 }
@@ -319,7 +319,7 @@ static void hfs_fuse_getattr_cb (fuse_req_t req, gboolean success, fuse_ino_t in
     stbuf.st_ctime = ctime;
     stbuf.st_atime = ctime;
     stbuf.st_mtime = ctime;
-    
+
     fuse_reply_attr (req, &stbuf, 1.0);
 }
 
@@ -328,7 +328,7 @@ static void hfs_fuse_getattr_cb (fuse_req_t req, gboolean success, fuse_ino_t in
 static void hfs_fuse_getattr (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 {
     HfsFuse *hfs_fuse = fuse_req_userdata (req);
-    
+
     LOG_debug (FUSE_LOG, "getattr  for %d", ino);
 
     dir_tree_getattr (hfs_fuse->dir_tree, ino, hfs_fuse_getattr_cb, req);
@@ -351,7 +351,7 @@ static void hfs_fuse_setattr_cb (fuse_req_t req, gboolean success, fuse_ino_t in
     stbuf.st_mode = mode;
 	stbuf.st_nlink = 1;
 	stbuf.st_size = file_size;
-    
+
     fuse_reply_attr (req, &stbuf, 1.0);
 }
 
@@ -421,7 +421,7 @@ static void hfs_fuse_open_cb (fuse_req_t req, gboolean success, struct fuse_file
 static void hfs_fuse_open (fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 {
     HfsFuse *hfs_fuse = fuse_req_userdata (req);
-    
+
     LOG_debug (FUSE_LOG, "[%p] open  inode: %d, flags: %d", fi, ino, fi->flags);
 
     dir_tree_file_open (hfs_fuse->dir_tree, ino, fi, hfs_fuse_open_cb, req);
@@ -458,7 +458,7 @@ void hfs_fuse_create_cb (fuse_req_t req, gboolean success, fuse_ino_t ino, int m
 static void hfs_fuse_create (fuse_req_t req, fuse_ino_t parent_ino, const char *name, mode_t mode, struct fuse_file_info *fi)
 {
     HfsFuse *hfs_fuse = fuse_req_userdata (req);
-    
+
     LOG_debug (FUSE_LOG, "create  parent inode: %"INO_FMT", name: %s, mode: %d ", parent_ino, name, mode);
 
     dir_tree_file_create (hfs_fuse->dir_tree, parent_ino, name, mode, hfs_fuse_create_cb, req, fi);
@@ -502,7 +502,7 @@ static void hfs_fuse_read_cb (fuse_req_t req, gboolean success, const char *buf,
 static void hfs_fuse_read (fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi)
 {
     HfsFuse *hfs_fuse = fuse_req_userdata (req);
-    
+
     LOG_debug (FUSE_LOG, "[%p] >>>> read  inode: %"INO_FMT", size: %zd, off: %"OFF_FMT, req, ino, size, off);
 
     dir_tree_file_read (hfs_fuse->dir_tree, ino, size, off, hfs_fuse_read_cb, req, fi);
@@ -519,7 +519,7 @@ static void hfs_fuse_write_cb (fuse_req_t req, gboolean success, size_t count)
 		fuse_reply_err (req, ENOENT);
         return;
     }
-    
+
     fuse_reply_write (req, count);
 }
 // FUSE lowlevel operation: write
@@ -527,7 +527,7 @@ static void hfs_fuse_write_cb (fuse_req_t req, gboolean success, size_t count)
 static void hfs_fuse_write (fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi)
 {
     HfsFuse *hfs_fuse = fuse_req_userdata (req);
-    
+
     // LOG_debug (FUSE_LOG, "write  inode: %"INO_FMT", size: %zd, off: %"OFF_FMT, ino, size, off);
 
     dir_tree_file_write (hfs_fuse->dir_tree, ino, buf, size, off, hfs_fuse_write_cb, req, fi);
@@ -551,9 +551,9 @@ static void hfs_fuse_forget_cb (fuse_req_t req, gboolean success)
 static void hfs_fuse_forget (fuse_req_t req, fuse_ino_t ino, unsigned long nlookup)
 {
     HfsFuse *hfs_fuse = fuse_req_userdata (req);
-    
+
     LOG_debug (FUSE_LOG, "forget  inode: %"INO_FMT", nlookup: %lu", ino, nlookup);
-    
+
     if (nlookup != 0) {
         LOG_debug (FUSE_LOG, "Ignoring forget with nlookup > 0");
         fuse_reply_none (req);
@@ -580,7 +580,7 @@ static void hfs_fuse_unlink_cb (fuse_req_t req, gboolean success)
 static void hfs_fuse_unlink (fuse_req_t req, fuse_ino_t parent, const char *name)
 {
     HfsFuse *hfs_fuse = fuse_req_userdata (req);
-    
+
     LOG_debug (FUSE_LOG, "[%p] unlink  parent_ino: %"INO_FMT", name: %s", req, parent, name);
 
     dir_tree_file_unlink (hfs_fuse->dir_tree, parent, name, hfs_fuse_unlink_cb, req);
@@ -610,10 +610,10 @@ static void hfs_fuse_mkdir_cb (fuse_req_t req, gboolean success, fuse_ino_t ino,
     e.attr.st_ctime = ctime;
     e.attr.st_atime = ctime;
     e.attr.st_mtime = ctime;
-    
+
     e.attr.st_ino = ino;
 	e.attr.st_size = file_size;
-    
+
     fuse_reply_entry (req, &e);
 }
 
@@ -622,7 +622,7 @@ static void hfs_fuse_mkdir_cb (fuse_req_t req, gboolean success, fuse_ino_t ino,
 static void hfs_fuse_mkdir (fuse_req_t req, fuse_ino_t parent_ino, const char *name, mode_t mode)
 {
     HfsFuse *hfs_fuse = fuse_req_userdata (req);
-    
+
     LOG_debug (FUSE_LOG, "mkdir  parent_ino: %"INO_FMT", name: %s, mode: %d", parent_ino, name, mode);
 
     dir_tree_dir_create (hfs_fuse->dir_tree, parent_ino, name, mode, hfs_fuse_mkdir_cb, req);
@@ -637,7 +637,7 @@ static void hfs_fuse_mkdir (fuse_req_t req, fuse_ino_t parent_ino, const char *n
 static void hfs_fuse_rmdir (fuse_req_t req, fuse_ino_t parent_ino, const char *name)
 {
     HfsFuse *hfs_fuse = fuse_req_userdata (req);
-    
+
     LOG_debug (FUSE_LOG, "rmdir  parent_ino: %"INO_FMT", name: %s", parent_ino, name);
 
     fuse_reply_err (req, 0);

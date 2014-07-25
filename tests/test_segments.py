@@ -29,7 +29,7 @@ class App ():
         #self.segment_size = "2034"
         random.seed (time.time())
 
-    def start_hydrafs (self, mnt_dir, log_file, cache_dir):
+    def start_swiftfs (self, mnt_dir, log_file, cache_dir):
         pid = os.fork ()
         if pid == 0:
             base_path = os.path.join(os.path.dirname(__file__), '..')
@@ -37,7 +37,7 @@ class App ():
             cache = "--cache-dir=" + cache_dir
             test_key = "--key-file=test.key"
             #cache = "--disable_cache"
-            args = [os.path.join(bin_path, "hydrafs"), "-f", cache, test_key, "--disable-stats", "--segment-size", self.segment_size, "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
+            args = [os.path.join(bin_path, "swiftfs"), "-f", cache, test_key, "--disable-stats", "--segment-size", self.segment_size, "http://10.0.0.104:8080/auth/v1.0", "cont1", mnt_dir]
             sys.stdout = open (log_file, 'w')
             os.execv(args[0], args)
         else:
@@ -65,10 +65,10 @@ class App ():
         except Exception, e:
             print "Failed to create temp dirs !", e
             return
-        
-        self.write_pid = self.start_hydrafs (self.write_dir, "./write.log", self.write_cache_dir)
-        self.read_pid = self.start_hydrafs (self.read_dir, "./read.log", self.read_cache_dir)
-        
+
+        self.write_pid = self.start_swiftfs (self.write_dir, "./write.log", self.write_cache_dir)
+        self.read_pid = self.start_swiftfs (self.read_dir, "./read.log", self.read_cache_dir)
+
         print "Creating list of files .."
         self.create_files ()
         print "Done."
@@ -105,7 +105,7 @@ class App ():
             self.unmount (self.read_dir)
         except Exception, e:
             print "Failed to unmount !", e
-        
+
         if failed == False:
             try:
                 shutil.rmtree (self.base_dir)
@@ -153,14 +153,14 @@ class App ():
             flen = random.randint (1024 * 1024 * 6, 1024 * 1024 * 20)
             self.create_file (self.src_dir + fname, flen)
             self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
-        
+
         # large files 30mb - 40mb
         for i in range (0, self.nr_tests):
             fname = self.str_gen ()
             flen = random.randint (1024 * 1024 * 30, 1024 * 1024 * 40)
             self.create_file (self.src_dir + fname, flen)
             self.l_files.append ({"name":self.src_dir + fname, "len": flen, "md5": self.md5_for_file (self.src_dir + fname)})
-    
+
 
     def check_file (self, entry):
         out_src_name = self.write_dir + os.path.basename (entry["name"])
@@ -173,14 +173,14 @@ class App ():
                 break
             except:
                 print "File not found, sleeping .."
-        
+
         in_dst_name = self.read_dir + os.path.basename (entry["name"])
 
         # TEST
         # shutil.copy (out_src_name, in_dst_name)
 
         out_dst_name = self.dst_dir + os.path.basename (entry["name"])
-        
+
         # write can take some extra time (due file release does not wait)
         for i in range (0, 10):
             try:
@@ -194,7 +194,7 @@ class App ():
             shutil.copy (in_dst_name, out_dst_name)
         except:
             return False
-        
+
         md5 = self.md5_for_file (out_dst_name)
 
         if md5 == entry["md5"]:
